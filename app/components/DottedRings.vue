@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // Three concentric dotted rings (dots = zero-length dashes with round caps).
 //
-// Idle (no `startedAt`): slow decorative CSS spin (outer ring black, inner rings grey).
+// Idle (no `startedAt`): markers slowly orbit (decorative); outer track black, inner tracks grey.
 // Running (`startedAt` = window start, epoch ms): each ring is a gauge filling clockwise from 12 o'clock,
 //   outer = seconds (fills every minute), middle = minutes (every hour), inner = hours (every 12 h).
 //   Filled dots are black, the rest grey; a marker rides the head of the fill.
-//   Driven by the Web Animations API so a new window can smoothly rewind to 0 and then resume.
+//
+// Every state change (first start, new window, stop) smoothly winds markers + fills back towards 0,
+// then hands over to the next state's animation. All motion uses the Web Animations API.
 const props = defineProps<{ startedAt?: number }>();
 
-const REWIND_MS = 700;
-const REWIND_EASING = "cubic-bezier(0.65, 0, 0.35, 1)";
+const TRANSITION_MS = 700;
+const EASING = "cubic-bezier(0.65, 0, 0.35, 1)";
 
 const uid = useId();
 
@@ -19,7 +21,7 @@ const rings = [
     dots: 72,
     size: 5,
     idleColor: "var(--ink)",
-    spin: "spin-cw",
+    idleOrbit: 120_000, // ms per turn; sign = direction
     period: 60_000,
     marker: { r: 9, fill: "var(--accent)" },
   },
@@ -28,7 +30,7 @@ const rings = [
     dots: 64,
     size: 4,
     idleColor: "var(--dot-light)",
-    spin: "spin-ccw",
+    idleOrbit: -160_000,
     period: 3_600_000,
     marker: { r: 6, fill: "var(--ink)" },
   },
@@ -37,7 +39,7 @@ const rings = [
     dots: 56,
     size: 3,
     idleColor: "var(--dot-light)",
-    spin: "spin-cw-slow",
+    idleOrbit: 200_000,
     period: 43_200_000,
     marker: { r: 5, fill: "var(--ink)" },
   },
@@ -54,9 +56,9 @@ const running = computed(() => props.startedAt !== undefined);
 const markerEls: (SVGGElement | null)[] = [];
 const arcEls: (SVGCircleElement | null)[] = [];
 let anims: Animation[] = [];
-let generation = 0; // invalidates pending rewinds on rapid taps
+let generation = 0; // invalidates pending transitions when the state changes again
 
-const turn = (deg: number) => ({ transform: `rotate(${deg}deg)` });
+const turn = (progress: number) => ({ transform: `rotate(${progress * 360}deg)` });
 const fill = (progress: number) => ({ strokeDashoffset: 100 * (1 - progress) });
 
 function stopAll() {
@@ -64,15 +66,33 @@ function stopAll() {
   anims = [];
 }
 
-/** Progress (0..1) currently shown by ring i, read from the live computed style. */
-function shownProgress(i: number): number {
-  const el = markerEls[i];
-  if (!el) return 0;
-  const t = getComputedStyle(el).transform;
-  if (!t || t === "none") return 0;
-  const m = new DOMMatrix(t);
-  const deg = (Math.atan2(m.b, m.a) * 180) / Math.PI;
-  return (((deg % 360) + 360) % 360) / 360;
+/** What ring i currently shows (0..1 for marker turn and fill), read from live computed styles. */
+function shown(i: number) {
+  const marker = markerEls[i];
+  const arc = arcEls[i];
+  let t = 0;
+  const transform = marker ? getComputedStyle(marker).transform : "none";
+  if (transform && transform !== "none") {
+    const m = new DOMMatrix(transform);
+    const deg = (Math.atan2(m.b, m.a) * 180) / Math.PI;
+    t = (((deg % 360) + 360) % 360) / 360;
+  }
+  const dash = arc ? parseFloat(getComputedStyle(arc).strokeDashoffset) : 100;
+  return { turn: t, fill: Number.isFinite(dash) ? 1 - dash / 100 : 0 };
+}
+
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function startIdle() {
+  stopAll();
+  if (reducedMotion()) return;
+  rings.forEach((ring, i) => {
+    const a = markerEls[i]?.animate([turn(0), turn(Math.sign(ring.idleOrbit))], {
+      duration: Math.abs(ring.idleOrbit),
+      iterations: Infinity,
+    });
+    if (a) anims.push(a);
+  });
 }
 
 function startClock(start: number) {
@@ -83,73 +103,111 @@ function startClock(start: number) {
     const arc = arcEls[i];
     if (!marker || !arc) return;
     const opts = { duration: ring.period, iterations: Infinity };
-    const spin = marker.animate([turn(0), turn(360)], opts);
+    const spin = marker.animate([turn(0), turn(1)], opts);
     const grow = arc.animate([fill(0), fill(1)], opts);
     spin.currentTime = grow.currentTime = elapsed % ring.period;
     anims.push(spin, grow);
   });
 }
 
-/** Smoothly winds every ring back towards 0, landing where the new window will be, then resumes. */
-function rewindTo(start: number) {
+/**
+ * Smoothly winds every ring from what it shows now back to `target(i)` (0..1),
+ * then runs `then` (the next state's animation).
+ */
+function windTo(target: (i: number) => number, then: () => void) {
   const gen = ++generation;
-  const from = rings.map((_, i) => shownProgress(i));
+  const from = rings.map((_, i) => shown(i));
   stopAll();
-  const landing = Date.now() - start + REWIND_MS;
-  const opts = { duration: REWIND_MS, easing: REWIND_EASING, fill: "forwards" as const };
-  rings.forEach((ring, i) => {
+  const opts = { duration: TRANSITION_MS, easing: EASING, fill: "forwards" as const };
+  rings.forEach((_, i) => {
     const marker = markerEls[i];
     const arc = arcEls[i];
-    if (!marker || !arc) return;
-    const to = (landing % ring.period) / ring.period;
-    const p = from[i] ?? 0;
+    const f = from[i];
+    if (!marker || !arc || !f) return;
+    const to = target(i);
     anims.push(
-      marker.animate([turn(p * 360), turn(to * 360)], opts),
-      arc.animate([fill(p), fill(to)], opts),
+      marker.animate([turn(f.turn), turn(to)], opts),
+      arc.animate([fill(f.fill), fill(to)], opts),
     );
   });
   Promise.all(anims.map((a) => a.finished))
     .then(() => {
-      if (gen === generation) startClock(start);
+      if (gen === generation) then();
     })
     .catch(() => {
-      // cancelled by a newer tap / stop — nothing to do
+      // cancelled by a newer state change — nothing to do
     });
 }
 
 watch(
   () => props.startedAt,
-  (next, prev) => {
-    generation++;
-    if (next === undefined) stopAll(); // stopped → idle template
-    else if (prev === undefined) startClock(next); // idle → first window
-    else rewindTo(next); // new window while running
+  (start) => {
+    if (start === undefined) {
+      // stop: drain to 0, then the idle orbit resumes from 12 o'clock
+      windTo(() => 0, startIdle);
+      return;
+    }
+    // first start / new window: land where the window will be when the transition ends
+    const landing = Date.now() - start + TRANSITION_MS;
+    windTo(
+      (i) => (landing % rings[i]!.period) / rings[i]!.period,
+      () => startClock(start),
+    );
   },
-  { flush: "post" }, // DOM for the running template exists before we animate it
 );
 
 onMounted(() => {
   if (props.startedAt !== undefined) startClock(props.startedAt);
+  else startIdle();
 });
-onBeforeUnmount(stopAll);
+onBeforeUnmount(() => {
+  generation++;
+  stopAll();
+});
 </script>
 
 <template>
   <div class="rings">
     <svg viewBox="0 0 400 400" aria-hidden="true">
-      <template v-for="(ring, i) in rings" :key="ring.r">
-        <!-- Idle: decorative spinning ring -->
-        <g v-if="!running" :class="ring.spin">
+      <g v-for="(ring, i) in rings" :key="ring.r">
+        <mask :id="ring.maskId" maskUnits="userSpaceOnUse" x="0" y="0" width="400" height="400">
           <circle
+            :ref="(el) => (arcEls[i] = el as SVGCircleElement | null)"
+            class="fill-arc"
             cx="200"
             cy="200"
             :r="ring.r"
             fill="none"
-            :stroke="ring.idleColor"
-            :stroke-width="ring.size"
-            stroke-linecap="round"
-            :stroke-dasharray="`0 ${ring.gap}`"
+            stroke="#fff"
+            stroke-width="16"
+            pathLength="100"
           />
+        </mask>
+        <!-- track: colour fades between idle and running -->
+        <circle
+          class="track"
+          cx="200"
+          cy="200"
+          :r="ring.r"
+          fill="none"
+          :style="{ stroke: running ? 'var(--dot-light)' : ring.idleColor }"
+          :stroke-width="ring.size"
+          stroke-linecap="round"
+          :stroke-dasharray="`0 ${ring.gap}`"
+        />
+        <!-- filled dots, revealed by the arc mask -->
+        <circle
+          cx="200"
+          cy="200"
+          :r="ring.r"
+          fill="none"
+          stroke="var(--ink)"
+          :stroke-width="ring.size"
+          stroke-linecap="round"
+          :stroke-dasharray="`0 ${ring.gap}`"
+          :mask="`url(#${ring.maskId})`"
+        />
+        <g :ref="(el) => (markerEls[i] = el as SVGGElement | null)" class="marker">
           <circle
             cx="200"
             :cy="200 - ring.r"
@@ -159,47 +217,7 @@ onBeforeUnmount(stopAll);
             stroke-width="2"
           />
         </g>
-
-        <!-- Running: static grey track + black dots revealed by a growing arc mask -->
-        <g v-else>
-          <mask :id="ring.maskId" maskUnits="userSpaceOnUse" x="0" y="0" width="400" height="400">
-            <circle
-              :ref="(el) => (arcEls[i] = el as SVGCircleElement | null)"
-              class="fill-arc"
-              cx="200"
-              cy="200"
-              :r="ring.r"
-              fill="none"
-              stroke="#fff"
-              stroke-width="16"
-              pathLength="100"
-            />
-          </mask>
-          <circle
-            v-for="(color, j) in ['var(--dot-light)', 'var(--ink)']"
-            :key="j"
-            cx="200"
-            cy="200"
-            :r="ring.r"
-            fill="none"
-            :stroke="color"
-            :stroke-width="ring.size"
-            stroke-linecap="round"
-            :stroke-dasharray="`0 ${ring.gap}`"
-            :mask="j === 1 ? `url(#${ring.maskId})` : undefined"
-          />
-          <g :ref="(el) => (markerEls[i] = el as SVGGElement | null)">
-            <circle
-              cx="200"
-              :cy="200 - ring.r"
-              :r="ring.marker.r"
-              :fill="ring.marker.fill"
-              stroke="var(--ink)"
-              stroke-width="2"
-            />
-          </g>
-        </g>
-      </template>
+      </g>
     </svg>
     <div class="center">
       <slot />
@@ -218,8 +236,11 @@ svg {
   height: 100%;
   overflow: visible;
 }
-g {
+.marker {
   transform-origin: 200px 200px;
+}
+.track {
+  transition: stroke 0.7s ease;
 }
 /* Arc mask: starts at 12 o'clock; dashoffset 100 = empty, 0 = full (animated from script). */
 .fill-arc {
@@ -227,29 +248,6 @@ g {
   transform: rotate(-90deg);
   stroke-dasharray: 100 100;
   stroke-dashoffset: 100;
-}
-
-.spin-cw {
-  animation: spin 120s linear infinite;
-}
-.spin-ccw {
-  animation: spin 160s linear infinite reverse;
-}
-.spin-cw-slow {
-  animation: spin 200s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-/* Reduced motion: drop the decorative idle spin; the clock rings carry information, keep them. */
-@media (prefers-reduced-motion: reduce) {
-  .spin-cw,
-  .spin-ccw,
-  .spin-cw-slow {
-    animation: none;
-  }
 }
 .center {
   position: absolute;
