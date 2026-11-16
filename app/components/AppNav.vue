@@ -114,6 +114,45 @@ const items = [
   }
 }
 
+/* ---------- phones: floating rounded pill at the bottom (same look as desktop) ---------- */
+@media (max-width: 639px) {
+  .nav {
+    inset: auto auto calc(env(safe-area-inset-bottom) + 0.75rem) 50%;
+    transform: translateX(-50%);
+    width: min(calc(100% - 2rem), 340px);
+    height: auto;
+    gap: 0.25rem;
+    padding: 0.3rem;
+    border: 1px solid color-mix(in srgb, var(--dot-light) 60%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, #fff 55%, transparent);
+    box-shadow: 0 10px 30px -14px rgb(0 0 0 / 0.3);
+  }
+  .item {
+    gap: 0.1rem;
+    padding: 0.4rem 0 0.35rem;
+    border-radius: 999px;
+    transition:
+      background-color 0.2s ease,
+      transform 0.2s ease;
+  }
+  .item.active {
+    background: var(--accent);
+  }
+  .item:active {
+    transform: scale(0.96);
+  }
+  .icon,
+  .item.active .icon {
+    width: auto;
+    height: auto;
+    background: none;
+  }
+  .item:active .icon {
+    transform: none;
+  }
+}
+
 /* ---------- desktop: floating pill, top-right ---------- */
 @media (min-width: 1024px) {
   .nav {

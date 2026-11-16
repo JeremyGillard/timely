@@ -42,6 +42,12 @@ body {
     padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
   }
 }
+/* Phones: floating pill nav (~58px) + gap below + breathing room above. */
+@media (max-width: 639px) {
+  :root {
+    --nav-h: 84px;
+  }
+}
 
 /* Let the page fill the (safe-area padded) body height through Nuxt's wrappers. */
 #__nuxt,
