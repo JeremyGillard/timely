@@ -9,6 +9,7 @@
   --accent: #e2f46b;
   --accent-ink: #121212;
   --danger: #d9453b;
+  --nav-h: 64px; /* bottom tab bar height (excl. safe area) */
   font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
 }
 
@@ -35,10 +36,41 @@ body {
   background: radial-gradient(circle at 75% 25%, var(--bg-glow), var(--bg) 60%) fixed;
 }
 
+/* Phones + tablets: room for the fixed bottom tab bar (it covers the home-indicator area itself). */
+@media (max-width: 1023px) {
+  body {
+    padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  }
+}
+
 /* Let the page fill the (safe-area padded) body height through Nuxt's wrappers. */
 #__nuxt,
 .app {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+/* ---------- shared page chrome ---------- */
+.page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1.5rem, 5vw, 3rem);
+}
+.page-title {
+  margin: 0;
+  font-size: clamp(2.5rem, 8vw, 4.5rem);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+@media (max-width: 640px) {
+  .page {
+    padding-top: clamp(2rem, 8vh, 4rem);
+  }
+  .page-title {
+    text-align: center;
+    font-size: clamp(3rem, 14vw, 4.5rem);
+  }
 }

@@ -3,7 +3,8 @@ useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
-const { windows, active, load, next, stop, remove } = useTimeWindows();
+const { windows, active, next, stop, remove } = useTimeWindows();
+const now = useNow();
 
 // Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
 const openId = ref<string | null>(null);
@@ -15,18 +16,8 @@ function removeWindow(id: string) {
   remove(id);
 }
 
-const now = ref(Date.now());
-let tick: ReturnType<typeof setInterval> | undefined;
-onMounted(() => {
-  load();
-  now.value = Date.now();
-  tick = setInterval(() => (now.value = Date.now()), 1000);
-  document.addEventListener("pointerdown", closeOnOutside);
-});
-onBeforeUnmount(() => {
-  clearInterval(tick);
-  document.removeEventListener("pointerdown", closeOnOutside);
-});
+onMounted(() => document.addEventListener("pointerdown", closeOnOutside));
+onBeforeUnmount(() => document.removeEventListener("pointerdown", closeOnOutside));
 
 const buzz = (pattern: number | number[]) => navigator.vibrate?.(pattern);
 
@@ -52,23 +43,13 @@ function onKeydown(e: KeyboardEvent) {
 
 const elapsed = computed(() => (active.value ? Math.max(0, now.value - active.value.start) : 0));
 
-const startOfToday = computed(() => new Date(now.value).setHours(0, 0, 0, 0));
+const startOfToday = computed(() => startOfDay(now.value));
 const today = computed(() =>
   windows.value.filter((w) => w.start >= startOfToday.value).toReversed(),
 );
 const todayTotal = computed(() =>
   today.value.reduce((sum, w) => sum + ((w.end ?? now.value) - w.start), 0),
 );
-
-function duration(ms: number) {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return [h, m, s % 60].map((n) => String(n).padStart(2, "0")).join(":"); // HH:MM:SS
-}
-
-const clock = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 const hint = computed(() =>
   active.value
@@ -78,8 +59,8 @@ const hint = computed(() =>
 </script>
 
 <template>
-  <main>
-    <h1>Timely</h1>
+  <main class="page">
+    <h1 class="page-title">Timely</h1>
 
     <section class="timer">
       <DottedRings :started-at="active?.start">
@@ -140,29 +121,6 @@ const hint = computed(() =>
 </template>
 
 <style scoped>
-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: clamp(1.5rem, 5vw, 3rem);
-}
-h1 {
-  margin: 0;
-  font-size: clamp(2.5rem, 8vw, 4.5rem);
-  font-weight: 400;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-@media (max-width: 640px) {
-  main {
-    padding-top: clamp(3rem, 12vh, 5rem);
-  }
-  h1 {
-    text-align: center;
-    font-size: clamp(3rem, 14vw, 4.5rem);
-  }
-}
-
 .timer {
   flex: 1;
   display: flex;

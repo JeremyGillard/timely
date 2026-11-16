@@ -228,7 +228,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .rings {
   position: relative;
-  width: min(85vw, 420px);
+  width: min(85vw, 420px, 46dvh); /* 46dvh: fits with title + tab bar on short phones */
   aspect-ratio: 1;
 }
 svg {
