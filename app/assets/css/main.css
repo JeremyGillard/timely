@@ -1,0 +1,25 @@
+/* Design tokens — style reference: Dribbble "Credit Health App" (light bg, lime accent, dotted rings). */
+:root {
+  color-scheme: light;
+  --bg: #f1f1ee;
+  --bg-glow: #f7efe6;
+  --ink: #121212;
+  --muted: #9a9a96;
+  --dot-light: #c9c9c4;
+  --accent: #e2f46b;
+  --accent-ink: #121212;
+  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  color: var(--ink);
+  background: radial-gradient(circle at 75% 25%, var(--bg-glow), var(--bg) 60%) fixed;
+}
