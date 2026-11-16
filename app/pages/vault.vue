@@ -83,6 +83,7 @@ async function onReset() {
 
 <style scoped>
 main {
+  width: 100%;
   max-width: 640px;
   margin: 2rem auto;
   padding: 0 1rem;

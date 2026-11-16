@@ -118,7 +118,7 @@ const hint = computed(() =>
 
 <style scoped>
 main {
-  min-height: 100dvh;
+  flex: 1;
   display: flex;
   flex-direction: column;
   padding: clamp(1.5rem, 5vw, 3rem);
@@ -147,7 +147,7 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  padding: 2rem 0;
+  padding: 1rem 0;
 }
 .hint {
   margin: 0;
