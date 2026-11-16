@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// Row that reveals a "Remove" action on swipe-left or tap/click.
-// Swipe right / tap again closes it. Vertical drags scroll the page as usual.
-const REVEAL = 96; // px, width of the action
+// List row:
+//  - tap / click / Enter  → emits `select` (opens the note editor, which also has Delete)
+//  - touch swipe-left     → reveals a "Remove" action (swipe right / tap closes); no mouse drag
+// Vertical drags scroll the page as usual.
+const REVEAL = 96; // px, width of the swipe action
 
 const open = defineModel<boolean>("open", { default: false });
-const emit = defineEmits<{ remove: [] }>();
+const emit = defineEmits<{ select: []; remove: [] }>();
 defineProps<{ label?: string }>();
 
 const drag = ref<number | null>(null); // live offset while dragging horizontally
@@ -26,7 +28,7 @@ function onDown(e: PointerEvent) {
 }
 
 function onMove(e: PointerEvent) {
-  if (!pressed) return;
+  if (!pressed || e.pointerType === "mouse") return; // swipe is touch/pen only
   const mx = e.clientX - startX;
   const my = e.clientY - startY;
   if (!axis) {
@@ -46,13 +48,18 @@ function onUp() {
   if (!pressed) return;
   pressed = false;
   if (axis === "x") open.value = (drag.value ?? 0) < -REVEAL / 2;
-  else if (axis === null) open.value = !open.value; // tap / click toggles
+  else if (axis === null) tap();
   drag.value = null;
 }
 
 function onCancel() {
   pressed = false;
   drag.value = null;
+}
+
+function tap() {
+  if (open.value) open.value = false;
+  else emit("select");
 }
 </script>
 
@@ -74,15 +81,16 @@ function onCancel() {
       :style="{ transform: `translateX(${offset}px)` }"
       role="button"
       tabindex="0"
-      :aria-expanded="open"
-      :aria-label="label ? `${label}. Show remove button` : 'Show remove button'"
+      :aria-label="label ? `${label}. Edit note` : 'Edit note'"
       @pointerdown="onDown"
       @pointermove="onMove"
       @pointerup="onUp"
       @pointercancel="onCancel"
-      @keydown.enter.space.prevent="open = !open"
+      @keydown.enter.space.self.prevent="tap"
     >
-      <slot />
+      <div class="slot">
+        <slot />
+      </div>
     </div>
   </div>
 </template>
@@ -111,6 +119,8 @@ function onCancel() {
 }
 .content {
   position: relative;
+  display: flex;
+  align-items: center;
   background: var(--bg);
   cursor: pointer;
   touch-action: pan-y; /* vertical = page scroll, horizontal = swipe */
@@ -124,5 +134,9 @@ function onCancel() {
 .content:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: -2px;
+}
+.slot {
+  flex: 1;
+  min-width: 0;
 }
 </style>

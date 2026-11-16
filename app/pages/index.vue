@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import type { TimeWindow } from "~/composables/useTimeWindows";
+
 useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
-const { windows, active, next, stop, remove } = useTimeWindows();
+const { windows, active, next, stop, remove, setNote, restore } = useTimeWindows();
 const now = useNow();
 
 // Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
@@ -12,12 +14,48 @@ const closeOnOutside = (e: PointerEvent) => {
   if (openId.value && !(e.target as Element).closest(".swipe.open")) openId.value = null;
 };
 function removeWindow(id: string) {
+  const w = windows.value.find((x) => x.id === id);
+  if (!w) return;
   openId.value = null;
+  if (editingId.value === id) editingId.value = null;
   remove(id);
+  showUndo(w);
+}
+
+// Undo toast: the last deletion can be restored for a few seconds.
+const UNDO_MS = 5000;
+const lastDeleted = ref<{ window: TimeWindow; at: number } | null>(null);
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+function showUndo(w: TimeWindow) {
+  lastDeleted.value = { window: w, at: Date.now() };
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => (lastDeleted.value = null), UNDO_MS);
+}
+function undoDelete() {
+  if (!lastDeleted.value) return;
+  restore(lastDeleted.value.window, lastDeleted.value.at);
+  lastDeleted.value = null;
+  clearTimeout(undoTimer);
+}
+const undoMessage = computed(() => {
+  const w = lastDeleted.value?.window;
+  if (!w) return null;
+  return `Deleted ${clock(w.start)} – ${w.end ? clock(w.end) : "now"}`;
+});
+
+// Note editor (tap / click a row)
+const editingId = ref<string | null>(null);
+const editing = computed(() => windows.value.find((w) => w.id === editingId.value) ?? null);
+function saveNote(note: string) {
+  if (editingId.value) setNote(editingId.value, note);
+  editingId.value = null;
 }
 
 onMounted(() => document.addEventListener("pointerdown", closeOnOutside));
-onBeforeUnmount(() => document.removeEventListener("pointerdown", closeOnOutside));
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", closeOnOutside);
+  clearTimeout(undoTimer);
+});
 
 const buzz = (pattern: number | number[]) => navigator.vibrate?.(pattern);
 
@@ -107,16 +145,30 @@ const hint = computed(() =>
             :open="openId === w.id"
             :label="`${clock(w.start)} to ${w.end ? clock(w.end) : 'now'}`"
             @update:open="(v) => (openId = v ? w.id : null)"
+            @select="editingId = w.id"
             @remove="removeWindow(w.id)"
           >
             <div class="row">
-              <span>{{ clock(w.start) }} – {{ w.end ? clock(w.end) : "now" }}</span>
-              <span>{{ duration((w.end ?? now) - w.start) }}</span>
+              <span class="when">
+                <span>{{ clock(w.start) }} – {{ w.end ? clock(w.end) : "now" }}</span>
+                <span v-if="w.note" class="note">{{ w.note }}</span>
+              </span>
+              <span class="amount">{{ duration((w.end ?? now) - w.start) }}</span>
             </div>
           </SwipeRow>
         </li>
       </TransitionGroup>
     </section>
+
+    <WindowEditor
+      :window="editing"
+      :now="now"
+      @close="editingId = null"
+      @save="saveNote"
+      @delete="editing && removeWindow(editing.id)"
+    />
+
+    <UndoToast :message="undoMessage" @action="undoDelete" />
   </main>
 </template>
 
@@ -246,7 +298,24 @@ li {
 .row {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
   padding: 0.6rem 0;
+}
+.when {
+  display: grid;
+  min-width: 0;
+}
+.note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--ink);
+  opacity: 0.75;
+}
+.amount {
+  flex-shrink: 0;
 }
 /* removal: slide out left + fade, remaining rows glide up */
 .row-move,

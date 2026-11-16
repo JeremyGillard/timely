@@ -2,6 +2,7 @@ export interface TimeWindow {
   id: string;
   start: number; // epoch ms
   end: number | null; // null = running
+  note?: string; // optional label / note
 }
 
 // Prototype persistence: plain localStorage. Move into the encrypted vault later.
@@ -53,5 +54,27 @@ export function useTimeWindows() {
     persist();
   }
 
-  return { windows, active, load, next, stop, remove };
+  /** Sets (or clears, when blank) the label/note of a window. */
+  function setNote(id: string, note: string) {
+    const trimmed = note.trim();
+    windows.value = windows.value.map((w) => {
+      if (w.id !== id) return w;
+      const { note: _old, ...rest } = w;
+      return trimmed ? { ...rest, note: trimmed } : rest;
+    });
+    persist();
+  }
+
+  /**
+   * Puts a deleted window back (undo). If it was running but another window has been
+   * started since, it's restored as stopped at the time it was deleted (never two running).
+   */
+  function restore(w: TimeWindow, deletedAt: number) {
+    if (windows.value.some((x) => x.id === w.id)) return;
+    const restored = w.end === null && active.value ? { ...w, end: deletedAt } : w;
+    windows.value = [...windows.value, restored].sort((a, b) => a.start - b.start);
+    persist();
+  }
+
+  return { windows, active, load, next, stop, remove, setNote, restore };
 }
