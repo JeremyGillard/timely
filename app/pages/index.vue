@@ -68,8 +68,7 @@ const hint = computed(() =>
     <h1>Timesheet</h1>
 
     <section class="timer">
-      <!-- keyed per window: rings restart from 12 o'clock -->
-      <DottedRings :key="active?.id ?? 'idle'" :started-at="active?.start">
+      <DottedRings :started-at="active?.start">
         <div
           class="press"
           :class="{ holding: press.holding.value }"
