@@ -26,7 +26,7 @@ async function onReset() {
 
 <template>
   <main>
-    <h1>Timesheet vault</h1>
+    <h1>Timely vault</h1>
     <p class="muted">Encrypted in OPFS · unlocked with a passkey (WebAuthn PRF)</p>
 
     <p v-if="error" class="error">{{ error }}</p>

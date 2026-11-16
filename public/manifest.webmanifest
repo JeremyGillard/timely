@@ -1,6 +1,6 @@
 {
-  "name": "Timesheet",
-  "short_name": "Timesheet",
+  "name": "Timely",
+  "short_name": "Timely",
   "description": "Track time windows with a tap.",
   "start_url": "/",
   "scope": "/",

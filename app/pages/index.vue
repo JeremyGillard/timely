@@ -1,5 +1,5 @@
 <script setup lang="ts">
-useHead({ title: "Timesheet" });
+useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
@@ -65,7 +65,7 @@ const hint = computed(() =>
 
 <template>
   <main>
-    <h1>Timesheet</h1>
+    <h1>Timely</h1>
 
     <section class="timer">
       <DottedRings :started-at="active?.start">

@@ -13,7 +13,7 @@ export default defineNuxtConfig({
         // Home-screen app (iOS + Android)
         { name: "mobile-web-app-capable", content: "yes" },
         { name: "apple-mobile-web-app-capable", content: "yes" },
-        { name: "apple-mobile-web-app-title", content: "Timesheet" },
+        { name: "apple-mobile-web-app-title", content: "Timely" },
         { name: "apple-mobile-web-app-status-bar-style", content: "default" },
       ],
       link: [

@@ -129,7 +129,7 @@ export async function createVault(userName: string): Promise<CryptoKey> {
   const salt = random(32);
   const created = (await navigator.credentials.create({
     publicKey: {
-      rp: { name: "Timesheet" },
+      rp: { name: "Timely" },
       user: { id: random(16), name: userName, displayName: userName },
       challenge: random(32),
       pubKeyCredParams: [
