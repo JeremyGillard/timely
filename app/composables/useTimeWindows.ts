@@ -47,5 +47,11 @@ export function useTimeWindows() {
     persist();
   }
 
-  return { windows, active, load, next, stop };
+  /** Deletes a window (removing the running one also stops it). */
+  function remove(id: string) {
+    windows.value = windows.value.filter((w) => w.id !== id);
+    persist();
+  }
+
+  return { windows, active, load, next, stop, remove };
 }

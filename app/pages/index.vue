@@ -3,7 +3,17 @@ useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
-const { windows, active, load, next, stop } = useTimeWindows();
+const { windows, active, load, next, stop, remove } = useTimeWindows();
+
+// Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
+const openId = ref<string | null>(null);
+const closeOnOutside = (e: PointerEvent) => {
+  if (openId.value && !(e.target as Element).closest(".swipe.open")) openId.value = null;
+};
+function removeWindow(id: string) {
+  openId.value = null;
+  remove(id);
+}
 
 const now = ref(Date.now());
 let tick: ReturnType<typeof setInterval> | undefined;
@@ -11,8 +21,12 @@ onMounted(() => {
   load();
   now.value = Date.now();
   tick = setInterval(() => (now.value = Date.now()), 1000);
+  document.addEventListener("pointerdown", closeOnOutside);
 });
-onBeforeUnmount(() => clearInterval(tick));
+onBeforeUnmount(() => {
+  clearInterval(tick);
+  document.removeEventListener("pointerdown", closeOnOutside);
+});
 
 const buzz = (pattern: number | number[]) => navigator.vibrate?.(pattern);
 
@@ -106,12 +120,21 @@ const hint = computed(() =>
         <span>Today</span>
         <span>{{ duration(todayTotal) }}</span>
       </div>
-      <ol>
+      <TransitionGroup tag="ol" name="row">
         <li v-for="w in today" :key="w.id" :class="{ live: !w.end }">
-          <span>{{ clock(w.start) }} – {{ w.end ? clock(w.end) : "now" }}</span>
-          <span>{{ duration((w.end ?? now) - w.start) }}</span>
+          <SwipeRow
+            :open="openId === w.id"
+            :label="`${clock(w.start)} to ${w.end ? clock(w.end) : 'now'}`"
+            @update:open="(v) => (openId = v ? w.id : null)"
+            @remove="removeWindow(w.id)"
+          >
+            <div class="row">
+              <span>{{ clock(w.start) }} – {{ w.end ? clock(w.end) : "now" }}</span>
+              <span>{{ duration((w.end ?? now) - w.start) }}</span>
+            </div>
+          </SwipeRow>
         </li>
-      </ol>
+      </TransitionGroup>
     </section>
   </main>
 </template>
@@ -253,16 +276,34 @@ h1 {
   border-bottom: 1px solid var(--dot-light);
 }
 ol {
+  position: relative;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 li {
+  border-bottom: 1px dotted var(--dot-light);
+  color: var(--muted);
+}
+.row {
   display: flex;
   justify-content: space-between;
   padding: 0.6rem 0;
-  border-bottom: 1px dotted var(--dot-light);
-  color: var(--muted);
+}
+/* removal: slide out left + fade, remaining rows glide up */
+.row-move,
+.row-leave-active {
+  transition:
+    transform 0.3s ease,
+    opacity 0.3s ease;
+}
+.row-leave-active {
+  position: absolute;
+  width: 100%;
+}
+.row-leave-to {
+  opacity: 0;
+  transform: translateX(-30%);
 }
 li.live {
   color: var(--ink);
