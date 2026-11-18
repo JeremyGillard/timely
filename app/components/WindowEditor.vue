@@ -120,8 +120,10 @@ const startSnaps = computed(() =>
   }),
 );
 const endSnaps = computed(() => props.others.map((w) => w.start));
-// Creating: a window dropped between two others, with each edge within FILL_RANGE of its
-// neighbour (short of it or overlapping it), stretches/shrinks to fill the gap exactly.
+// Creating, on drop:
+// - between two windows, each edge within FILL_RANGE of its neighbour (short of it or
+//   overlapping it) → stretches/shrinks to fill the gap exactly;
+// - before the day's first window (nothing earlier that day) → its end joins that window.
 const FILL_RANGE = 5 * 60_000;
 let stopFill: (() => void) | null = null;
 function onStartDrop() {
@@ -131,12 +133,18 @@ function onStartDrop() {
   const mid = (s + e) / 2;
   let prevEnd = -Infinity;
   let nextStart = Infinity;
+  const dayStart = startOfDay(s);
   for (const w of props.others) {
     const end = w.end ?? props.now;
-    if (end <= mid) prevEnd = Math.max(prevEnd, end);
+    if (end <= mid && end > dayStart) prevEnd = Math.max(prevEnd, end); // same day only
     if (w.start >= mid) nextStart = Math.min(nextStart, w.start);
   }
-  if (Math.abs(s - prevEnd) > FILL_RANGE || Math.abs(e - nextStart) > FILL_RANGE) return;
+  const firstOfDay = prevEnd === -Infinity;
+  if (firstOfDay) {
+    if (nextStart === Infinity || startOfDay(nextStart) !== dayStart) return; // no window after, that day
+    if (nextStart - s < MIN_WINDOW_MS) return;
+    prevEnd = s; // keep the start where it was dropped
+  } else if (Math.abs(s - prevEnd) > FILL_RANGE || Math.abs(e - nextStart) > FILL_RANGE) return;
   if (nextStart - prevEnd < MIN_WINDOW_MS || (s === prevEnd && e === nextStart)) return;
   navigator.vibrate?.(8);
   // ease both edges onto the gap together (the ruler follows the start)
@@ -336,6 +344,7 @@ function onDialogClick(e: MouseEvent) {
             :busy="busy"
             :band="startBand"
             :snap-points="startSnaps"
+            :now="now"
             :conflict="blocked"
             label="Start"
             @limit="onLimit"
@@ -350,6 +359,7 @@ function onDialogClick(e: MouseEvent) {
             :busy="busy"
             :band="{ kind: 'end', other: draftStart }"
             :snap-points="endSnaps"
+            :now="now"
             :conflict="blocked"
             label="End"
             @limit="onLimit"

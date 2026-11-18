@@ -21,6 +21,8 @@ const props = defineProps<{
   band?: { kind: "start" | "end" | "move"; other: number };
   /** The current placement can't be saved: overlap shown red instead of amber. */
   conflict?: boolean;
+  /** Current time (ms): everything after it is shaded as unavailable. */
+  now?: number;
   /** Magnetic values (ms), e.g. where an edge meets another window: drags stick, flicks land. */
   snapPoints?: number[];
 }>();
@@ -290,6 +292,14 @@ const overlapBlocks = computed(() => {
   });
 });
 
+/** The future: from now to the right edge of what's rendered. */
+const futureBlock = computed(() => {
+  if (props.now === undefined) return null;
+  const n = props.now / MIN;
+  const style = place(n, view.value[1]);
+  return style ? { style, nowVisible: n >= view.value[0] } : null;
+});
+
 const trackStyle = computed(() => ({ transform: `translateX(${-(pos.value - anchor) * PX}px)` }));
 const valueText = computed(() => `${props.label} ${clock(model.value)}`);
 </script>
@@ -322,6 +332,9 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
         :style="{ left: `${(t.m - anchor) * PX}px` }"
       >
         <span v-if="t.text" class="label">{{ t.text }}</span>
+      </span>
+      <span v-if="futureBlock" class="future" :style="futureBlock.style">
+        <span v-if="futureBlock.nowVisible" class="now-label">now</span>
       </span>
       <span v-for="b in busyBlocks" :key="b.key" class="block busy" :style="b.style">
         {{ b.label }}
@@ -377,6 +390,29 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
 .tick.major {
   height: 20px;
   background: var(--muted);
+}
+/* time after now: not available */
+.future {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgb(0 0 0 / 0.06) 0 5px,
+    rgb(0 0 0 / 0.02) 5px 10px
+  );
+  border-left: 1.5px solid var(--muted);
+  pointer-events: none;
+}
+.now-label {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .block {
   position: absolute;
