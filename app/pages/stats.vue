@@ -135,7 +135,7 @@ function saveEdits(e: { note: string; start: number; end: number | null }) {
           :disabled="settings.weeklyTargetH <= TARGET_MIN_H"
           @click="step(-1)"
         >
-          −
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9" /></svg>
         </button>
         <input
           v-if="editingTarget"
@@ -167,7 +167,9 @@ function saveEdits(e: { note: string; start: number; end: number | null }) {
           :disabled="settings.weeklyTargetH >= TARGET_MAX_H"
           @click="step(1)"
         >
-          +
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.5 8h9M8 3.5v9" />
+          </svg>
         </button>
       </div>
     </section>
@@ -320,13 +322,13 @@ section {
 .target {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.25rem;
   font-variant-numeric: tabular-nums;
 }
 .target-label {
   color: var(--muted);
   font-size: 0.9rem;
-  margin-right: 0.25rem;
+  margin-right: 0.5rem;
 }
 .step,
 .target-value {
@@ -347,13 +349,22 @@ section {
   background: #fff;
   font-size: 1.1rem;
 }
+.icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
 .step:disabled {
   opacity: 0.35;
   cursor: default;
 }
 .target-value {
-  min-width: 3.5rem;
-  padding: 0.35rem 0.6rem;
+  box-sizing: border-box; /* `all: unset` resets it to content-box */
+  min-width: 3.25rem; /* room for "100 h" without the steppers jumping */
+  padding: 0.35rem 0.35rem;
   border-radius: 10px;
   font-weight: 500;
   font-size: 1.05rem;
@@ -372,7 +383,8 @@ section {
   outline-offset: 2px;
 }
 .target-input {
-  width: 3.5rem;
+  box-sizing: border-box;
+  width: 3.25rem;
   padding: 0.35rem 0.4rem;
   border: 1px solid var(--dot-light);
   border-radius: 10px;
