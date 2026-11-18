@@ -1,13 +1,19 @@
 <script setup lang="ts">
-// Edit a time window's label/note. Native <dialog>: Esc / backdrop click close it.
+// Edit a time window: start/end (minute ruler), tags, label/note. Native <dialog>: Esc / backdrop click close it.
 // Phones: bottom sheet. Larger screens: centred card.
 import type { Tag, TimeWindow } from "~/composables/useTimeWindows";
 
 // `tags` comes ordered most-recently-used first.
-const props = defineProps<{ window: TimeWindow | null; now: number; tags: Tag[] }>();
+const props = defineProps<{
+  window: TimeWindow | null;
+  now: number;
+  tags: Tag[];
+  /** Neighbours' edges: the window may not overlap them. */
+  bounds: { prevEnd: number | null; nextStart: number | null };
+}>();
 const emit = defineEmits<{
   close: [];
-  save: [note: string];
+  save: [edits: { note: string; start: number; end: number | null }];
   delete: [];
   "toggle-tag": [id: string];
   "create-tag": [name: string];
@@ -48,6 +54,47 @@ async function cancelNewTag() {
   addButton.value?.focus();
 }
 
+// ---------- start / end (draft until Save) ----------
+const MIN = 60_000;
+const draftStart = ref(0);
+const draftEnd = ref<number | null>(null);
+const edge = ref<"start" | "end" | null>(null);
+const running = computed(() => draftEnd.value === null);
+const endOrNow = computed(() => draftEnd.value ?? props.now);
+
+const startMin = computed(() => props.bounds.prevEnd ?? (props.window?.start ?? 0) - DAY_MS);
+const startMax = computed(() => endOrNow.value - MIN);
+const endMin = computed(() => draftStart.value + MIN);
+const endMax = computed(() => Math.min(props.bounds.nextStart ?? Infinity, props.now));
+
+const hint = ref("");
+let hintTimer: ReturnType<typeof setTimeout> | undefined;
+function onLimit(side: "min" | "max") {
+  const { prevEnd, nextStart } = props.bounds;
+  if (edge.value === "start") {
+    hint.value =
+      side === "max"
+        ? "Must start before it ends"
+        : prevEnd !== null
+          ? `Previous window ends ${clock(prevEnd)}`
+          : "Up to 24 h back";
+  } else {
+    hint.value =
+      side === "min"
+        ? "Must end after it starts"
+        : nextStart !== null && nextStart <= props.now
+          ? `Next window starts ${clock(nextStart)}`
+          : "Can't end in the future";
+  }
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => (hint.value = ""), 2500);
+}
+function pick(which: "start" | "end") {
+  edge.value = edge.value === which ? null : which;
+  hint.value = "";
+}
+onBeforeUnmount(() => clearTimeout(hintTimer));
+
 const dialog = ref<HTMLDialogElement | null>(null);
 const input = ref<HTMLTextAreaElement | null>(null);
 const draft = ref("");
@@ -59,6 +106,10 @@ watch(
     if (!el) return;
     if (id) {
       draft.value = props.window?.note ?? "";
+      draftStart.value = props.window?.start ?? 0;
+      draftEnd.value = props.window?.end ?? null;
+      edge.value = null;
+      hint.value = "";
       order.value = props.tags.map((t) => t.id);
       adding.value = false;
       if (!el.open) el.showModal();
@@ -71,7 +122,7 @@ watch(
 );
 
 function save() {
-  emit("save", draft.value);
+  emit("save", { note: draft.value, start: draftStart.value, end: draftEnd.value });
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -97,12 +148,56 @@ function onDialogClick(e: MouseEvent) {
     @click="onDialogClick"
   >
     <form v-if="window" class="card" @submit.prevent="save">
+      <h2 id="window-editor-title" class="sr-only">Edit time window</h2>
       <header>
-        <h2 id="window-editor-title">
-          {{ clock(window.start) }} – {{ window.end ? clock(window.end) : "now" }}
-        </h2>
-        <span class="duration">{{ duration((window.end ?? now) - window.start) }}</span>
+        <div class="range">
+          <button
+            type="button"
+            class="pill"
+            :aria-pressed="edge === 'start'"
+            aria-label="Adjust start time"
+            @click="pick('start')"
+          >
+            <span class="pill-label">Start</span>{{ clock(draftStart) }}
+          </button>
+          <span class="arrow" aria-hidden="true">→</span>
+          <button
+            type="button"
+            class="pill"
+            :aria-pressed="edge === 'end'"
+            :disabled="running"
+            :aria-label="running ? 'Still running' : 'Adjust end time'"
+            @click="pick('end')"
+          >
+            <span class="pill-label">End</span>{{ running ? "now" : clock(endOrNow) }}
+          </button>
+        </div>
+        <span class="duration">{{ duration(endOrNow - draftStart) }}</span>
       </header>
+
+      <Transition name="ruler">
+        <div v-if="edge" class="ruler" :class="edge">
+          <TimeScrubber
+            v-if="edge === 'start'"
+            key="start"
+            v-model="draftStart"
+            :min="startMin"
+            :max="startMax"
+            label="Start"
+            @limit="onLimit"
+          />
+          <TimeScrubber
+            v-else-if="draftEnd !== null"
+            key="end"
+            v-model="draftEnd"
+            :min="endMin"
+            :max="endMax"
+            label="End"
+            @limit="onLimit"
+          />
+          <p class="limit-hint" aria-live="polite">{{ hint }}</p>
+        </div>
+      </Transition>
 
       <div class="tags" role="group" aria-label="Tags">
         <button
@@ -181,15 +276,80 @@ function onDialogClick(e: MouseEvent) {
 }
 header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
-h2 {
-  margin: 0;
+.range {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.pill {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0.3rem 0.7rem;
+  border-radius: 12px;
   font-size: 1.25rem;
   font-weight: 500;
   letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 0.15s ease,
+    transform 0.1s ease-out;
+}
+.pill:not(:disabled):hover {
+  background: rgb(0 0 0 / 0.04);
+}
+.pill:not(:disabled):active {
+  transform: scale(0.96);
+}
+.pill[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.pill:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+.pill-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.arrow {
+  color: var(--muted);
+}
+.ruler {
+  display: grid;
+  gap: 0.35rem;
+  transform-origin: 20% 0;
+}
+.ruler.end {
+  transform-origin: 60% 0;
+}
+.limit-hint {
+  margin: 0;
+  min-height: 1.1em;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+.ruler-enter-active,
+.ruler-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ruler-enter-from,
+.ruler-leave-to {
+  opacity: 0;
+  transform: scale(0.94) translateY(-6px);
 }
 .duration {
   color: var(--muted);
@@ -341,7 +501,12 @@ button:focus-visible {
   .sheet[open] .card {
     animation: none;
   }
-  .chip:active {
+  .chip:active,
+  .pill:not(:disabled):active {
+    transform: none;
+  }
+  .ruler-enter-from,
+  .ruler-leave-to {
     transform: none;
   }
 }

@@ -104,6 +104,31 @@ export function useTimeWindows() {
     persist();
   }
 
+  /** Edges of the windows right before and after this one (the limits it may not cross). */
+  function boundsFor(id: string): { prevEnd: number | null; nextStart: number | null } {
+    const self = windows.value.find((w) => w.id === id);
+    if (!self) return { prevEnd: null, nextStart: null };
+    let prevEnd: number | null = null;
+    let nextStart: number | null = null;
+    for (const w of windows.value) {
+      if (w.id === id) continue;
+      if (w.start < self.start) prevEnd = Math.max(prevEnd ?? -Infinity, w.end ?? Date.now());
+      else nextStart = Math.min(nextStart ?? Infinity, w.start);
+    }
+    return { prevEnd, nextStart };
+  }
+
+  /** Moves a window's start/end, clamped so it never overlaps its neighbours or the future. */
+  function setTimes(id: string, start: number, end: number | null) {
+    const { prevEnd, nextStart } = boundsFor(id);
+    const now = Date.now();
+    const s = Math.max(start, prevEnd ?? -Infinity);
+    const e = end === null ? null : Math.min(end, nextStart ?? Infinity, now);
+    if (s >= (e ?? now)) return; // invalid: keep the window as it was
+    windows.value = windows.value.map((w) => (w.id === id ? { ...w, start: s, end: e } : w));
+    persist();
+  }
+
   /** Creates a tag, or returns the existing one with the same name (case-insensitive). */
   function createTag(name: string): Tag | null {
     const trimmed = name.trim();
@@ -164,6 +189,8 @@ export function useTimeWindows() {
     remove,
     setNote,
     restore,
+    boundsFor,
+    setTimes,
     createTag,
     renameTag,
     deleteTag,

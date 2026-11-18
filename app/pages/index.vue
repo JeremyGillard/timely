@@ -5,8 +5,20 @@ useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
-const { windows, tags, active, next, stop, remove, setNote, restore, createTag, toggleTag } =
-  useTimeWindows();
+const {
+  windows,
+  tags,
+  active,
+  next,
+  stop,
+  remove,
+  setNote,
+  restore,
+  boundsFor,
+  setTimes,
+  createTag,
+  toggleTag,
+} = useTimeWindows();
 const now = useNow();
 
 // Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
@@ -67,8 +79,14 @@ function onCreateTag(name: string) {
   const w = editing.value;
   if (tag && w && !w.tags?.includes(tag.id)) onToggleTag(tag.id);
 }
-function saveNote(note: string) {
-  if (editingId.value) setNote(editingId.value, note);
+const editingBounds = computed(() =>
+  editingId.value ? boundsFor(editingId.value) : { prevEnd: null, nextStart: null },
+);
+function saveEdits(e: { note: string; start: number; end: number | null }) {
+  if (editingId.value) {
+    setNote(editingId.value, e.note);
+    setTimes(editingId.value, e.start, e.end);
+  }
   editingId.value = null;
 }
 
@@ -190,10 +208,11 @@ const hint = computed(() =>
       :window="editing"
       :now="now"
       :tags="tagsByRecency"
+      :bounds="editingBounds"
       @toggle-tag="onToggleTag"
       @create-tag="onCreateTag"
       @close="editingId = null"
-      @save="saveNote"
+      @save="saveEdits"
       @delete="editing && removeWindow(editing.id)"
     />
 
