@@ -111,6 +111,26 @@ const busy = computed(() =>
     label: w.note ?? `${clock(w.start)} – ${w.end ? clock(w.end) : "now"}`,
   })),
 );
+// Magnetic points: values where the edited edge(s) meet another window exactly.
+const startSnaps = computed(() =>
+  props.others.flatMap((w) => {
+    const end = w.end ?? props.now;
+    // creating (whole window moves): start meets an end, or the end meets a start
+    return props.isNew ? [end, w.start - length.value] : [end];
+  }),
+);
+const endSnaps = computed(() => props.others.map((w) => w.start));
+/** "Right after / before …" when an edge touches another window exactly. */
+const touching = computed(() => {
+  const parts: string[] = [];
+  const after = props.others.find((w) => (w.end ?? props.now) === draftStart.value);
+  const before = props.others.find((w) => w.start === endOrNow.value);
+  if (after) parts.push(`right after ${span(after)}`);
+  if (before) parts.push(`right before ${span(before)}`);
+  const text = parts.join(", ");
+  return text ? `Snapped ${text}` : "";
+});
+
 /** How the edited window's own block follows the ruler. */
 const startBand = computed(() =>
   props.isNew
@@ -168,7 +188,10 @@ function onLimit(side: "min" | "max") {
   hintTimer = setTimeout(() => (hint.value = ""), 2500);
 }
 const rulerCaption = computed(
-  () => hint.value || (props.isNew && edge.value === "start" ? "Moves the whole window" : ""),
+  () =>
+    hint.value ||
+    touching.value ||
+    (props.isNew && edge.value === "start" ? "Moves the whole window" : ""),
 );
 function pick(which: "start" | "end") {
   edge.value = edge.value === which ? null : which;
@@ -196,8 +219,9 @@ watch(
       if (!el.open) el.showModal();
       // new window: times come first (and no on-screen keyboard over the ruler)
       if (!props.isNew) input.value?.focus();
-    } else if (el.open) {
-      el.close();
+    } else {
+      edge.value = null; // next open mounts the ruler only once its draft is set
+      if (el.open) el.close();
     }
   },
   { flush: "post" },
@@ -270,6 +294,7 @@ function onDialogClick(e: MouseEvent) {
             :max="startMax"
             :busy="busy"
             :band="startBand"
+            :snap-points="startSnaps"
             :conflict="blocked"
             label="Start"
             @limit="onLimit"
@@ -282,6 +307,7 @@ function onDialogClick(e: MouseEvent) {
             :max="endMax"
             :busy="busy"
             :band="{ kind: 'end', other: draftStart }"
+            :snap-points="endSnaps"
             :conflict="blocked"
             label="End"
             @limit="onLimit"

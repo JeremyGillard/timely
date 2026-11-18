@@ -21,6 +21,8 @@ const props = defineProps<{
   band?: { kind: "start" | "end" | "move"; other: number };
   /** The current placement can't be saved: overlap shown red instead of amber. */
   conflict?: boolean;
+  /** Magnetic values (ms), e.g. where an edge meets another window: drags stick, flicks land. */
+  snapPoints?: number[];
 }>();
 const model = defineModel<number>({ required: true });
 const emit = defineEmits<{ limit: [side: "min" | "max"] }>();
@@ -34,10 +36,32 @@ const clamp = (m: number) => Math.min(hi.value, Math.max(lo.value, m));
 /** Nearest whole minute inside the bounds (a bound itself may sit between minutes). */
 const snap = (m: number) => clamp(Math.round(m));
 
+// ---------- magnetic snap points ----------
+const DETENT = 0.75; // min: while dragging, the needle sticks this close to a point
+const CATCH = 3; // min: a release / wheel settle landing this close goes to the point
+/** Nearest snap point (minutes) within `radius` of m and inside the bounds, else null. */
+function magnet(m: number, radius: number): number | null {
+  let best: number | null = null;
+  for (const ms of props.snapPoints ?? []) {
+    const p = ms / MIN;
+    if (p < lo.value || p > hi.value) continue;
+    if (Math.abs(p - m) <= radius && (best === null || Math.abs(p - m) < Math.abs(best - m)))
+      best = p;
+  }
+  return best;
+}
+/** Where to settle: a nearby snap point beats the nearest whole minute. */
+const land = (m: number) => magnet(m, CATCH) ?? snap(m);
+const snapped = computed(() => magnet(pos.value, 1e-6) !== null);
+watch(snapped, (on) => {
+  if (on) navigator.vibrate?.(8); // a "click" as it locks on
+});
+
 // ---------- output ----------
 let lastEmitted = model.value;
 function emitValue(m: number) {
-  const ms = Math.round(snap(m) * MIN);
+  const exact = magnet(m, 1e-6); // sitting on a snap point: keep its exact ms (no gap)
+  const ms = exact !== null ? Math.round(exact * MIN) : Math.round(snap(m) * MIN);
   if (ms !== lastEmitted) {
     lastEmitted = ms;
     model.value = ms;
@@ -66,6 +90,13 @@ function limit(side: "min" | "max" | null) {
   }
   atLimit = side;
 }
+
+// Value changed from outside (not by this ruler): jump there, unless the user is mid-gesture.
+watch(model, (v) => {
+  if (v === lastEmitted || dragging.value || stopSpring) return;
+  lastEmitted = v;
+  pos.value = v / MIN;
+});
 
 function show(m: number) {
   pos.value = m;
@@ -126,7 +157,7 @@ function onMove(e: PointerEvent) {
   samples.push({ t: e.timeStamp, x: e.clientX });
   if (samples.length > 6) samples.shift();
   const raw = startPos - (e.clientX - startX) / PX; // content moves with the finger
-  const m = banded(raw);
+  const m = magnet(raw, DETENT) ?? banded(raw);
   limit(raw < lo.value ? "min" : raw > hi.value ? "max" : null);
   show(m);
 }
@@ -143,7 +174,7 @@ function onUp(e: PointerEvent) {
   const v = -pxPerS / PX;
 
   const projected = pos.value + project(-pxPerS, 0.995) / PX;
-  const target = snap(projected);
+  const target = land(projected);
   if (projected < lo.value) limit("min");
   else if (projected > hi.value) limit("max");
   else limit(null);
@@ -170,7 +201,7 @@ function onWheel(e: WheelEvent) {
   limit(raw < lo.value ? "min" : raw > hi.value ? "max" : null);
   show(clamp(raw));
   clearTimeout(wheelTimer);
-  wheelTimer = setTimeout(() => settleTo(snap(pos.value)), 120);
+  wheelTimer = setTimeout(() => settleTo(land(pos.value)), 120);
 }
 
 // ---------- keyboard ----------
@@ -291,7 +322,7 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
         :style="o.style"
       />
     </div>
-    <span class="needle" aria-hidden="true" />
+    <span class="needle" :class="{ snapped }" aria-hidden="true" />
   </div>
 </template>
 
@@ -395,5 +426,17 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
   border-radius: 1px;
   background: var(--ink);
   pointer-events: none;
+}
+.needle.snapped {
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.needle {
+  transition:
+    width 0.12s ease-out,
+    margin 0.12s ease-out,
+    box-shadow 0.12s ease-out;
 }
 </style>
