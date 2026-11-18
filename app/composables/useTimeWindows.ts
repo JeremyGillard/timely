@@ -39,6 +39,16 @@ const TAGS_KEY = "timesheet-tags";
 export function useTimeWindows() {
   const windows = useState<TimeWindow[]>("time-windows", () => []);
   const tags = useState<Tag[]>("time-window-tags", () => []);
+  /** Tags, most recently used first, then never-used ones. */
+  const tagsByRecency = computed(() => {
+    const seen = new Set<string>();
+    for (let i = windows.value.length - 1; i >= 0; i--) {
+      for (const id of windows.value[i]!.tags ?? []) seen.add(id);
+    }
+    const byId = new Map(tags.value.map((t) => [t.id, t]));
+    const used = [...seen].map((id) => byId.get(id)).filter((t) => t !== undefined);
+    return [...used, ...tags.value.filter((t) => !seen.has(t.id))];
+  });
   const active = computed(() => windows.value.find((w) => w.end === null) ?? null);
 
   const persist = () => {
@@ -228,6 +238,7 @@ export function useTimeWindows() {
   return {
     windows,
     tags,
+    tagsByRecency,
     active,
     load,
     next,

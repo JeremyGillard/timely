@@ -10,15 +10,20 @@ import {
 } from "~/composables/useTimeWindows";
 
 // `tags` comes ordered most-recently-used first.
-const props = defineProps<{
-  window: TimeWindow | null;
-  now: number;
-  tags: Tag[];
-  /** All other windows; the ones right before / after get trimmed on Save if overlapped. */
-  others: TimeWindow[];
-  /** Creating a new window (not yet saved) rather than editing one. */
-  isNew?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    window: TimeWindow | null;
+    now: number;
+    tags: Tag[];
+    /** All other windows; the ones right before / after get trimmed on Save if overlapped. */
+    others: TimeWindow[];
+    /** Creating a new window (not yet saved) rather than editing one. */
+    isNew?: boolean;
+    /** Show the Delete button (default true). */
+    deletable?: boolean;
+  }>(),
+  { deletable: true },
+);
 const emit = defineEmits<{
   close: [];
   save: [edits: { note: string; start: number; end: number | null }];
@@ -422,7 +427,9 @@ function onDialogClick(e: MouseEvent) {
       </label>
 
       <div class="actions">
-        <button v-if="!isNew" type="button" class="delete" @click="emit('delete')">Delete</button>
+        <button v-if="!isNew && deletable" type="button" class="delete" @click="emit('delete')">
+          Delete
+        </button>
         <span class="spacer" />
         <button type="button" class="ghost" @click="emit('close')">Cancel</button>
         <button type="submit" class="primary" :disabled="blocked">

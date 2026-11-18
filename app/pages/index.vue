@@ -18,6 +18,7 @@ const {
   setTimes,
   createTag,
   toggleTag,
+  tagsByRecency,
 } = useTimeWindows();
 const now = useNow();
 
@@ -72,16 +73,6 @@ function closeEditor() {
   editingId.value = null;
   draftNew.value = null;
 }
-// Tags: most recently used first, then never-used ones.
-const tagsByRecency = computed(() => {
-  const seen = new Set<string>();
-  for (let i = windows.value.length - 1; i >= 0; i--) {
-    for (const id of windows.value[i]!.tags ?? []) seen.add(id);
-  }
-  const byId = new Map(tags.value.map((t) => [t.id, t]));
-  const used = [...seen].map((id) => byId.get(id)).filter((t) => t !== undefined);
-  return [...used, ...tags.value.filter((t) => !seen.has(t.id))];
-});
 const tagsOf = (w: TimeWindow) =>
   (w.tags ?? []).map((id) => tags.value.find((t) => t.id === id)).filter((t) => t !== undefined);
 function onToggleTag(tagId: string) {
