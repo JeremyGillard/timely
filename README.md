@@ -2,6 +2,12 @@
 
 Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
 
+## Demo
+
+<!-- For an inline player, replace this link with a GitHub user-attachments URL (drag motion/features-v2.mp4 into the GitHub web editor). -->
+
+[▶ Watch the feature tour](motion/features-v2.mp4)
+
 ## Setup
 
 Make sure to install dependencies:
