@@ -3,18 +3,40 @@ export interface TimeWindow {
   start: number; // epoch ms
   end: number | null; // null = running
   note?: string; // optional label / note
+  tags?: string[]; // Tag ids; omitted when empty
 }
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+// Muted hues, legible as dots and as tinted chip backgrounds.
+const TAG_COLORS = [
+  "#5b8def",
+  "#e0864a",
+  "#4fae7b",
+  "#c25d9b",
+  "#8a6fd6",
+  "#d4a72c",
+  "#3fa6b5",
+  "#d9574f",
+];
 
 // Prototype persistence: plain localStorage. Move into the encrypted vault later.
 const STORAGE_KEY = "timesheet-windows";
+const TAGS_KEY = "timesheet-tags";
 
 export function useTimeWindows() {
   const windows = useState<TimeWindow[]>("time-windows", () => []);
+  const tags = useState<Tag[]>("time-window-tags", () => []);
   const active = computed(() => windows.value.find((w) => w.end === null) ?? null);
 
   const persist = () => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(windows.value));
+      localStorage.setItem(TAGS_KEY, JSON.stringify(tags.value));
     } catch {
       // storage unavailable (private mode, quota) — keep in memory only
     }
@@ -26,6 +48,12 @@ export function useTimeWindows() {
       if (raw) windows.value = JSON.parse(raw) as TimeWindow[];
     } catch {
       windows.value = [];
+    }
+    try {
+      const raw = localStorage.getItem(TAGS_KEY);
+      if (raw) tags.value = JSON.parse(raw) as Tag[];
+    } catch {
+      tags.value = [];
     }
   }
 
@@ -76,5 +104,74 @@ export function useTimeWindows() {
     persist();
   }
 
-  return { windows, active, load, next, stop, remove, setNote, restore };
+  /** Creates a tag, or returns the existing one with the same name (case-insensitive). */
+  function createTag(name: string): Tag | null {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const existing = tags.value.find((t) => t.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing;
+    const tag: Tag = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      color: TAG_COLORS[tags.value.length % TAG_COLORS.length]!,
+    };
+    tags.value = [...tags.value, tag];
+    persist();
+    return tag;
+  }
+
+  function renameTag(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    tags.value = tags.value.map((t) => (t.id === id ? { ...t, name: trimmed } : t));
+    persist();
+  }
+
+  /** Deletes a tag and strips it from every window. */
+  function deleteTag(id: string) {
+    tags.value = tags.value.filter((t) => t.id !== id);
+    windows.value = windows.value.map((w) =>
+      w.tags?.includes(id)
+        ? withTags(
+            w,
+            w.tags.filter((x) => x !== id),
+          )
+        : w,
+    );
+    persist();
+  }
+
+  /** Adds the tag to the window, or removes it if already there. Returns true if now tagged. */
+  function toggleTag(windowId: string, tagId: string): boolean {
+    let tagged = false;
+    windows.value = windows.value.map((w) => {
+      if (w.id !== windowId) return w;
+      const current = w.tags ?? [];
+      tagged = !current.includes(tagId);
+      return withTags(w, tagged ? [...current, tagId] : current.filter((x) => x !== tagId));
+    });
+    persist();
+    return tagged;
+  }
+
+  return {
+    windows,
+    tags,
+    active,
+    load,
+    next,
+    stop,
+    remove,
+    setNote,
+    restore,
+    createTag,
+    renameTag,
+    deleteTag,
+    toggleTag,
+  };
+}
+
+function withTags(w: TimeWindow, ids: string[]): TimeWindow {
+  const { tags: _old, ...rest } = w;
+  return ids.length ? { ...rest, tags: ids } : rest;
 }

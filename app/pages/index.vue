@@ -5,7 +5,8 @@ useHead({ title: "Timely" });
 
 const HOLD_MS = 3000;
 
-const { windows, active, next, stop, remove, setNote, restore } = useTimeWindows();
+const { windows, tags, active, next, stop, remove, setNote, restore, createTag, toggleTag } =
+  useTimeWindows();
 const now = useNow();
 
 // Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
@@ -46,6 +47,26 @@ const undoMessage = computed(() => {
 // Note editor (tap / click a row)
 const editingId = ref<string | null>(null);
 const editing = computed(() => windows.value.find((w) => w.id === editingId.value) ?? null);
+// Tags: most recently used first, then never-used ones.
+const tagsByRecency = computed(() => {
+  const seen = new Set<string>();
+  for (let i = windows.value.length - 1; i >= 0; i--) {
+    for (const id of windows.value[i]!.tags ?? []) seen.add(id);
+  }
+  const byId = new Map(tags.value.map((t) => [t.id, t]));
+  const used = [...seen].map((id) => byId.get(id)).filter((t) => t !== undefined);
+  return [...used, ...tags.value.filter((t) => !seen.has(t.id))];
+});
+const tagsOf = (w: TimeWindow) =>
+  (w.tags ?? []).map((id) => tags.value.find((t) => t.id === id)).filter((t) => t !== undefined);
+function onToggleTag(tagId: string) {
+  if (editingId.value && toggleTag(editingId.value, tagId)) buzz(10);
+}
+function onCreateTag(name: string) {
+  const tag = createTag(name);
+  const w = editing.value;
+  if (tag && w && !w.tags?.includes(tag.id)) onToggleTag(tag.id);
+}
 function saveNote(note: string) {
   if (editingId.value) setNote(editingId.value, note);
   editingId.value = null;
@@ -151,7 +172,12 @@ const hint = computed(() =>
             <div class="row">
               <span class="when">
                 <span>{{ clock(w.start) }} – {{ w.end ? clock(w.end) : "now" }}</span>
-                <span v-if="w.note" class="note">{{ w.note }}</span>
+                <span v-if="w.tags?.length || w.note" class="meta">
+                  <span v-for="t in tagsOf(w)" :key="t.id" class="tag">
+                    <span class="dot" :style="{ background: t.color }" />{{ t.name }}
+                  </span>
+                  <span v-if="w.note" class="note">{{ w.note }}</span>
+                </span>
               </span>
               <span class="amount">{{ duration((w.end ?? now) - w.start) }}</span>
             </div>
@@ -163,6 +189,9 @@ const hint = computed(() =>
     <WindowEditor
       :window="editing"
       :now="now"
+      :tags="tagsByRecency"
+      @toggle-tag="onToggleTag"
+      @create-tag="onCreateTag"
       @close="editingId = null"
       @save="saveNote"
       @delete="editing && removeWindow(editing.id)"
@@ -306,12 +335,31 @@ li {
   display: grid;
   min-width: 0;
 }
-.note {
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.85rem;
   color: var(--ink);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+.note {
+  overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0.75;
 }
 .amount {

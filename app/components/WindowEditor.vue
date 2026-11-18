@@ -1,10 +1,52 @@
 <script setup lang="ts">
 // Edit a time window's label/note. Native <dialog>: Esc / backdrop click close it.
 // Phones: bottom sheet. Larger screens: centred card.
-import type { TimeWindow } from "~/composables/useTimeWindows";
+import type { Tag, TimeWindow } from "~/composables/useTimeWindows";
 
-const props = defineProps<{ window: TimeWindow | null; now: number }>();
-const emit = defineEmits<{ close: []; save: [note: string]; delete: [] }>();
+// `tags` comes ordered most-recently-used first.
+const props = defineProps<{ window: TimeWindow | null; now: number; tags: Tag[] }>();
+const emit = defineEmits<{
+  close: [];
+  save: [note: string];
+  delete: [];
+  "toggle-tag": [id: string];
+  "create-tag": [name: string];
+}>();
+
+// Chip order is frozen while the sheet is open, so chips never shuffle under the finger.
+const order = ref<string[]>([]);
+const chips = computed(() => {
+  const byId = new Map(props.tags.map((t) => [t.id, t]));
+  const known = order.value.map((id) => byId.get(id)).filter((t): t is Tag => !!t);
+  const added = props.tags.filter((t) => !order.value.includes(t.id));
+  return [...known, ...added];
+});
+const selected = computed(() => new Set(props.window?.tags ?? []));
+
+const adding = ref(false);
+const newTag = ref("");
+const newTagInput = ref<HTMLInputElement | null>(null);
+async function startAdding() {
+  adding.value = true;
+  newTag.value = "";
+  await nextTick();
+  newTagInput.value?.focus();
+}
+const addButton = ref<HTMLButtonElement | null>(null);
+async function commitNewTag(e?: Event) {
+  if (!adding.value) return; // blur fires after Enter/Esc unmounts the input
+  adding.value = false;
+  if (newTag.value.trim()) emit("create-tag", newTag.value);
+  if (e?.type === "keydown") {
+    await nextTick();
+    addButton.value?.focus(); // keep keyboard flow: Enter again to add another
+  }
+}
+async function cancelNewTag() {
+  adding.value = false;
+  await nextTick();
+  addButton.value?.focus();
+}
 
 const dialog = ref<HTMLDialogElement | null>(null);
 const input = ref<HTMLTextAreaElement | null>(null);
@@ -17,6 +59,8 @@ watch(
     if (!el) return;
     if (id) {
       draft.value = props.window?.note ?? "";
+      order.value = props.tags.map((t) => t.id);
+      adding.value = false;
       if (!el.open) el.showModal();
       input.value?.focus();
     } else if (el.open) {
@@ -59,6 +103,37 @@ function onDialogClick(e: MouseEvent) {
         </h2>
         <span class="duration">{{ duration((window.end ?? now) - window.start) }}</span>
       </header>
+
+      <div class="tags" role="group" aria-label="Tags">
+        <button
+          v-for="t in chips"
+          :key="t.id"
+          type="button"
+          class="chip"
+          role="checkbox"
+          :aria-checked="selected.has(t.id)"
+          :style="{ '--tag': t.color }"
+          @click="emit('toggle-tag', t.id)"
+        >
+          <span class="dot" aria-hidden="true" />{{ t.name }}
+        </button>
+        <input
+          v-if="adding"
+          ref="newTagInput"
+          v-model="newTag"
+          class="chip new-input"
+          maxlength="32"
+          placeholder="Tag name"
+          aria-label="New tag name"
+          enterkeyhint="done"
+          @keydown.enter.stop.prevent="commitNewTag"
+          @keydown.esc.stop.prevent="cancelNewTag"
+          @blur="commitNewTag"
+        />
+        <button v-else ref="addButton" type="button" class="chip add" @click="startAdding">
+          + Tag
+        </button>
+      </div>
 
       <label class="field">
         <span class="sr-only">Label or note</span>
@@ -133,6 +208,56 @@ textarea {
   line-height: 1.4;
 }
 textarea:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--dot-light);
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 450;
+  line-height: 1.2;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 0.1s ease-out,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.chip:active {
+  transform: scale(0.96);
+}
+.chip[aria-checked="true"] {
+  background: color-mix(in srgb, var(--tag) 18%, #fff);
+  border-color: var(--tag);
+}
+.dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--tag);
+}
+.chip.add {
+  border-style: dashed;
+  color: var(--muted);
+}
+.new-input {
+  width: 9rem;
+  font: inherit;
+  font-size: 1rem; /* ≥16px: no iOS zoom on focus */
+  padding: 0.3rem 0.8rem;
+}
+.new-input:focus {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
 }
@@ -215,6 +340,9 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .sheet[open] .card {
     animation: none;
+  }
+  .chip:active {
+    transform: none;
   }
 }
 </style>
