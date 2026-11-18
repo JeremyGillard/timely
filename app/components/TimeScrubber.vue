@@ -8,7 +8,14 @@ const PX = 12; // px per minute
 const MIN = 60_000;
 const VISIBLE = 32; // minutes rendered either side of the needle
 
-const props = defineProps<{ min: number; max: number; label: string }>();
+const props = defineProps<{
+  min: number;
+  max: number;
+  label: string;
+  /** Past these (but within min/max) the value is allowed and shown as an overlap. */
+  softMin?: number;
+  softMax?: number;
+}>();
 const model = defineModel<number>({ required: true });
 const emit = defineEmits<{ limit: [side: "min" | "max"] }>();
 
@@ -183,13 +190,22 @@ onBeforeUnmount(() => {
 // ---------- render ----------
 const center = computed(() => Math.round(pos.value));
 const ticks = computed(() => {
-  const out: { m: number; major: boolean; out: boolean; text: string | null }[] = [];
+  const out: {
+    m: number;
+    major: boolean;
+    out: boolean;
+    overlap: boolean;
+    text: string | null;
+  }[] = [];
+  const softLo = props.softMin === undefined ? -Infinity : props.softMin / MIN;
+  const softHi = props.softMax === undefined ? Infinity : props.softMax / MIN;
   for (let m = center.value - VISIBLE; m <= center.value + VISIBLE; m++) {
     const major = m % 5 === 0;
     out.push({
       m,
       major,
       out: m < Math.ceil(lo.value) || m > Math.floor(hi.value),
+      overlap: m < softLo || m > softHi,
       text: major ? clock(m * MIN) : null,
     });
   }
@@ -223,7 +239,7 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
         v-for="t in ticks"
         :key="t.m"
         class="tick"
-        :class="{ major: t.major, out: t.out }"
+        :class="{ major: t.major, out: t.out, overlap: t.overlap }"
         :style="{ left: `${(t.m - anchor) * PX}px` }"
       >
         <span v-if="t.text" class="label">{{ t.text }}</span>
@@ -271,6 +287,9 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
 .tick.major {
   height: 20px;
   background: var(--muted);
+}
+.tick.overlap {
+  background: var(--warning);
 }
 .tick.out {
   opacity: 0.3;

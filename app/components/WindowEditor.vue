@@ -1,15 +1,20 @@
 <script setup lang="ts">
 // Edit a time window: start/end (minute ruler), tags, label/note. Native <dialog>: Esc / backdrop click close it.
 // Phones: bottom sheet. Larger screens: centred card.
-import type { Tag, TimeWindow } from "~/composables/useTimeWindows";
+import {
+  MIN_WINDOW_MS,
+  type Neighbours,
+  type Tag,
+  type TimeWindow,
+} from "~/composables/useTimeWindows";
 
 // `tags` comes ordered most-recently-used first.
 const props = defineProps<{
   window: TimeWindow | null;
   now: number;
   tags: Tag[];
-  /** Neighbours' edges: the window may not overlap them. */
-  bounds: { prevEnd: number | null; nextStart: number | null };
+  /** Windows right before / after: overlapping them trims them on Save. */
+  neighbours: Neighbours;
 }>();
 const emit = defineEmits<{
   close: [];
@@ -55,35 +60,64 @@ async function cancelNewTag() {
 }
 
 // ---------- start / end (draft until Save) ----------
-const MIN = 60_000;
 const draftStart = ref(0);
 const draftEnd = ref<number | null>(null);
 const edge = ref<"start" | "end" | null>(null);
 const running = computed(() => draftEnd.value === null);
 const endOrNow = computed(() => draftEnd.value ?? props.now);
 
-const startMin = computed(() => props.bounds.prevEnd ?? (props.window?.start ?? 0) - DAY_MS);
-const startMax = computed(() => endOrNow.value - MIN);
-const endMin = computed(() => draftStart.value + MIN);
-const endMax = computed(() => Math.min(props.bounds.nextStart ?? Infinity, props.now));
+const prev = computed(() => props.neighbours.prev);
+const next = computed(() => props.neighbours.next);
+const prevEnd = computed(() => (prev.value ? (prev.value.end ?? props.now) : null));
+
+// Hard limits: may overlap a neighbour, but not swallow it (it keeps ≥ MIN_WINDOW_MS).
+const startMin = computed(() =>
+  prev.value ? prev.value.start + MIN_WINDOW_MS : (props.window?.start ?? 0) - DAY_MS,
+);
+const startMax = computed(() => endOrNow.value - MIN_WINDOW_MS);
+const endMin = computed(() => draftStart.value + MIN_WINDOW_MS);
+const endMax = computed(() =>
+  Math.min(props.now, next.value ? (next.value.end ?? props.now) - MIN_WINDOW_MS : Infinity),
+);
+
+// Soft limits: past these the edit overlaps a neighbour, which Save will trim.
+const overlapsPrev = computed(() => prevEnd.value !== null && draftStart.value < prevEnd.value);
+const overlapsNext = computed(
+  () => next.value !== null && draftEnd.value !== null && draftEnd.value > next.value.start,
+);
+const warning = computed(() => {
+  const parts: string[] = [];
+  if (overlapsPrev.value && prev.value)
+    parts.push(
+      `Overlaps the previous window (${clock(prev.value.start)} – ${clock(prevEnd.value!)}): it will end at ${clock(draftStart.value)}.`,
+    );
+  if (overlapsNext.value && next.value)
+    parts.push(
+      `Overlaps the next window (${clock(next.value.start)} – ${next.value.end ? clock(next.value.end) : "now"}): it will start at ${clock(draftEnd.value!)}.`,
+    );
+  return parts.join(" ");
+});
+// one firm bump when an edit starts overlapping
+watch([overlapsPrev, overlapsNext], ([a, b], [wasA, wasB]) => {
+  if ((a && !wasA) || (b && !wasB)) navigator.vibrate?.(10);
+});
 
 const hint = ref("");
 let hintTimer: ReturnType<typeof setTimeout> | undefined;
 function onLimit(side: "min" | "max") {
-  const { prevEnd, nextStart } = props.bounds;
   if (edge.value === "start") {
     hint.value =
       side === "max"
         ? "Must start before it ends"
-        : prevEnd !== null
-          ? `Previous window ends ${clock(prevEnd)}`
+        : prev.value
+          ? "Can't go past the start of the previous window"
           : "Up to 24 h back";
   } else {
     hint.value =
       side === "min"
         ? "Must end after it starts"
-        : nextStart !== null && nextStart <= props.now
-          ? `Next window starts ${clock(nextStart)}`
+        : next.value && endMax.value < props.now
+          ? "Can't go past the end of the next window"
           : "Can't end in the future";
   }
   clearTimeout(hintTimer);
@@ -183,6 +217,7 @@ function onDialogClick(e: MouseEvent) {
             v-model="draftStart"
             :min="startMin"
             :max="startMax"
+            :soft-min="prevEnd ?? undefined"
             label="Start"
             @limit="onLimit"
           />
@@ -192,12 +227,17 @@ function onDialogClick(e: MouseEvent) {
             v-model="draftEnd"
             :min="endMin"
             :max="endMax"
+            :soft-max="next?.start"
             label="End"
             @limit="onLimit"
           />
           <p class="limit-hint" aria-live="polite">{{ hint }}</p>
         </div>
       </Transition>
+
+      <p v-if="warning" class="overlap-warning" role="status">
+        <span aria-hidden="true">⚠︎</span> {{ warning }}
+      </p>
 
       <div class="tags" role="group" aria-label="Tags">
         <button
@@ -332,6 +372,15 @@ header {
 }
 .ruler.end {
   transform-origin: 60% 0;
+}
+.overlap-warning {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 14%, #fff);
+  color: color-mix(in srgb, var(--warning) 55%, var(--ink));
+  font-size: 0.85rem;
+  line-height: 1.35;
 }
 .limit-hint {
   margin: 0;

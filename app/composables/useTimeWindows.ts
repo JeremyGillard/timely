@@ -6,6 +6,14 @@ export interface TimeWindow {
   tags?: string[]; // Tag ids; omitted when empty
 }
 
+export interface Neighbours {
+  prev: TimeWindow | null;
+  next: TimeWindow | null;
+}
+
+/** Shortest a window can be squeezed to by editing (it or a neighbour). */
+export const MIN_WINDOW_MS = 60_000;
+
 export interface Tag {
   id: string;
   name: string;
@@ -104,28 +112,38 @@ export function useTimeWindows() {
     persist();
   }
 
-  /** Edges of the windows right before and after this one (the limits it may not cross). */
-  function boundsFor(id: string): { prevEnd: number | null; nextStart: number | null } {
+  /** The windows right before and after this one. */
+  function neighboursOf(id: string): Neighbours {
     const self = windows.value.find((w) => w.id === id);
-    if (!self) return { prevEnd: null, nextStart: null };
-    let prevEnd: number | null = null;
-    let nextStart: number | null = null;
+    let prev: TimeWindow | null = null;
+    let next: TimeWindow | null = null;
+    if (!self) return { prev, next };
     for (const w of windows.value) {
       if (w.id === id) continue;
-      if (w.start < self.start) prevEnd = Math.max(prevEnd ?? -Infinity, w.end ?? Date.now());
-      else nextStart = Math.min(nextStart ?? Infinity, w.start);
+      if (w.start < self.start) {
+        if (!prev || w.start > prev.start) prev = w;
+      } else if (!next || w.start < next.start) next = w;
     }
-    return { prevEnd, nextStart };
+    return { prev, next };
   }
 
-  /** Moves a window's start/end, clamped so it never overlaps its neighbours or the future. */
+  /**
+   * Moves a window's start/end. Overlapping a neighbour trims that neighbour (it keeps at
+   * least MIN_WINDOW_MS); nothing may end in the future.
+   */
   function setTimes(id: string, start: number, end: number | null) {
-    const { prevEnd, nextStart } = boundsFor(id);
+    const { prev, next } = neighboursOf(id);
     const now = Date.now();
-    const s = Math.max(start, prevEnd ?? -Infinity);
-    const e = end === null ? null : Math.min(end, nextStart ?? Infinity, now);
+    const s = Math.max(start, prev ? prev.start + MIN_WINDOW_MS : -Infinity);
+    const e =
+      end === null ? null : Math.min(end, now, next ? (next.end ?? now) - MIN_WINDOW_MS : Infinity);
     if (s >= (e ?? now)) return; // invalid: keep the window as it was
-    windows.value = windows.value.map((w) => (w.id === id ? { ...w, start: s, end: e } : w));
+    windows.value = windows.value.map((w) => {
+      if (w.id === id) return { ...w, start: s, end: e };
+      if (w.id === prev?.id && (w.end ?? now) > s) return { ...w, end: s };
+      if (w.id === next?.id && e !== null && w.start < e) return { ...w, start: e };
+      return w;
+    });
     persist();
   }
 
@@ -189,7 +207,7 @@ export function useTimeWindows() {
     remove,
     setNote,
     restore,
-    boundsFor,
+    neighboursOf,
     setTimes,
     createTag,
     renameTag,

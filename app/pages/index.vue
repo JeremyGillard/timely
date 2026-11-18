@@ -14,7 +14,7 @@ const {
   remove,
   setNote,
   restore,
-  boundsFor,
+  neighboursOf,
   setTimes,
   createTag,
   toggleTag,
@@ -79,8 +79,8 @@ function onCreateTag(name: string) {
   const w = editing.value;
   if (tag && w && !w.tags?.includes(tag.id)) onToggleTag(tag.id);
 }
-const editingBounds = computed(() =>
-  editingId.value ? boundsFor(editingId.value) : { prevEnd: null, nextStart: null },
+const editingNeighbours = computed(() =>
+  editingId.value ? neighboursOf(editingId.value) : { prev: null, next: null },
 );
 function saveEdits(e: { note: string; start: number; end: number | null }) {
   if (editingId.value) {
@@ -208,7 +208,7 @@ const hint = computed(() =>
       :window="editing"
       :now="now"
       :tags="tagsByRecency"
-      :bounds="editingBounds"
+      :neighbours="editingNeighbours"
       @toggle-tag="onToggleTag"
       @create-tag="onCreateTag"
       @close="editingId = null"

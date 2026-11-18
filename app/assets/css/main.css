@@ -9,6 +9,7 @@
   --accent: #e2f46b;
   --accent-ink: #121212;
   --danger: #d9453b;
+  --warning: #d98a1c;
   --nav-h: 64px; /* bottom tab bar height (excl. safe area) */
   font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
 }
