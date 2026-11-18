@@ -25,7 +25,11 @@ const props = defineProps<{
   snapPoints?: number[];
 }>();
 const model = defineModel<number>({ required: true });
-const emit = defineEmits<{ limit: [side: "min" | "max"] }>();
+const emit = defineEmits<{
+  limit: [side: "min" | "max"];
+  /** A drag / flick / wheel gesture has come to rest (not emitted for keyboard steps). */
+  drop: [value: number];
+}>();
 
 const lo = computed(() => props.min / MIN);
 const hi = computed(() => props.max / MIN);
@@ -111,9 +115,15 @@ const halt = () => {
   stopSpring?.();
   stopSpring = null;
 };
-function settleTo(target: number, velocity = 0, bouncy = false) {
+function settleTo(target: number, velocity = 0, bouncy = false, dropped = false) {
   halt();
-  if (prefersReducedMotion() || target === pos.value) return show(target);
+  const done = () => {
+    if (dropped) emit("drop", model.value);
+  };
+  if (prefersReducedMotion() || target === pos.value) {
+    show(target);
+    return done();
+  }
   springTarget = target;
   stopSpring = animateSpring({
     from: pos.value,
@@ -123,7 +133,10 @@ function settleTo(target: number, velocity = 0, bouncy = false) {
     response: 0.35,
     restDelta: 0.002,
     onUpdate: (x) => show(x),
-    onDone: () => (stopSpring = null),
+    onDone: () => {
+      stopSpring = null;
+      done();
+    },
   });
 }
 
@@ -180,13 +193,13 @@ function onUp(e: PointerEvent) {
   else limit(null);
   // out of bounds (rubber-banded) → no extra velocity into the wall
   const outside = pos.value < lo.value || pos.value > hi.value;
-  settleTo(target, outside ? 0 : v, !outside && Math.abs(pxPerS) > 300);
+  settleTo(target, outside ? 0 : v, !outside && Math.abs(pxPerS) > 300, true);
 }
 
 function onCancel() {
   if (!dragging.value) return;
   dragging.value = false;
-  settleTo(snap(pos.value));
+  settleTo(snap(pos.value), 0, false, true);
 }
 
 // ---------- wheel / trackpad ----------
@@ -201,7 +214,7 @@ function onWheel(e: WheelEvent) {
   limit(raw < lo.value ? "min" : raw > hi.value ? "max" : null);
   show(clamp(raw));
   clearTimeout(wheelTimer);
-  wheelTimer = setTimeout(() => settleTo(land(pos.value)), 120);
+  wheelTimer = setTimeout(() => settleTo(land(pos.value), 0, false, true), 120);
 }
 
 // ---------- keyboard ----------

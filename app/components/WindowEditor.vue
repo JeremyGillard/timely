@@ -120,6 +120,47 @@ const startSnaps = computed(() =>
   }),
 );
 const endSnaps = computed(() => props.others.map((w) => w.start));
+// Creating: a window dropped between two others, with each edge within FILL_RANGE of its
+// neighbour (short of it or overlapping it), stretches/shrinks to fill the gap exactly.
+const FILL_RANGE = 5 * 60_000;
+let stopFill: (() => void) | null = null;
+function onStartDrop() {
+  if (!props.isNew || draftEnd.value === null) return;
+  const s = draftStart.value;
+  const e = draftEnd.value;
+  const mid = (s + e) / 2;
+  let prevEnd = -Infinity;
+  let nextStart = Infinity;
+  for (const w of props.others) {
+    const end = w.end ?? props.now;
+    if (end <= mid) prevEnd = Math.max(prevEnd, end);
+    if (w.start >= mid) nextStart = Math.min(nextStart, w.start);
+  }
+  if (Math.abs(s - prevEnd) > FILL_RANGE || Math.abs(e - nextStart) > FILL_RANGE) return;
+  if (nextStart - prevEnd < MIN_WINDOW_MS || (s === prevEnd && e === nextStart)) return;
+  navigator.vibrate?.(8);
+  // ease both edges onto the gap together (the ruler follows the start)
+  const from = { s, e };
+  const to = { s: prevEnd, e: nextStart };
+  const apply = (t: number) => {
+    draftEnd.value = Math.round(from.e + (to.e - from.e) * t);
+    draftStart.value = Math.round(from.s + (to.s - from.s) * t);
+  };
+  stopFill?.();
+  if (prefersReducedMotion()) return apply(1);
+  stopFill = animateSpring({
+    from: 0,
+    to: 1,
+    response: 0.3,
+    onUpdate: (t) => apply(t),
+    onDone: () => {
+      apply(1);
+      stopFill = null;
+    },
+  });
+}
+onBeforeUnmount(() => stopFill?.());
+
 /** "Right after / before …" when an edge touches another window exactly. */
 const touching = computed(() => {
   const parts: string[] = [];
@@ -298,6 +339,7 @@ function onDialogClick(e: MouseEvent) {
             :conflict="blocked"
             label="Start"
             @limit="onLimit"
+            @drop="onStartDrop"
           />
           <TimeScrubber
             v-else-if="draftEnd !== null"
