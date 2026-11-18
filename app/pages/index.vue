@@ -14,7 +14,7 @@ const {
   remove,
   setNote,
   restore,
-  neighboursOf,
+  add,
   setTimes,
   createTag,
   toggleTag,
@@ -56,9 +56,22 @@ const undoMessage = computed(() => {
   return `Deleted ${clock(w.start)} – ${w.end ? clock(w.end) : "now"}`;
 });
 
-// Note editor (tap / click a row)
+// Editor sheet: tap a row to edit it, or "+ Add" to create one (a draft until Add).
 const editingId = ref<string | null>(null);
-const editing = computed(() => windows.value.find((w) => w.id === editingId.value) ?? null);
+const draftNew = ref<TimeWindow | null>(null);
+const editing = computed(
+  () => draftNew.value ?? windows.value.find((w) => w.id === editingId.value) ?? null,
+);
+const others = computed(() => windows.value.filter((w) => w.id !== editingId.value));
+function startAdding() {
+  openId.value = null;
+  editingId.value = null;
+  draftNew.value = { id: crypto.randomUUID(), ...defaultRange(windows.value, Date.now()) };
+}
+function closeEditor() {
+  editingId.value = null;
+  draftNew.value = null;
+}
 // Tags: most recently used first, then never-used ones.
 const tagsByRecency = computed(() => {
   const seen = new Set<string>();
@@ -72,22 +85,29 @@ const tagsByRecency = computed(() => {
 const tagsOf = (w: TimeWindow) =>
   (w.tags ?? []).map((id) => tags.value.find((t) => t.id === id)).filter((t) => t !== undefined);
 function onToggleTag(tagId: string) {
-  if (editingId.value && toggleTag(editingId.value, tagId)) buzz(10);
+  const d = draftNew.value;
+  if (d) {
+    const has = d.tags?.includes(tagId) ?? false;
+    const ids = has ? d.tags!.filter((x) => x !== tagId) : [...(d.tags ?? []), tagId];
+    const { tags: _old, ...rest } = d;
+    draftNew.value = ids.length ? { ...rest, tags: ids } : rest;
+    if (!has) buzz(10);
+  } else if (editingId.value && toggleTag(editingId.value, tagId)) buzz(10);
 }
 function onCreateTag(name: string) {
   const tag = createTag(name);
   const w = editing.value;
   if (tag && w && !w.tags?.includes(tag.id)) onToggleTag(tag.id);
 }
-const editingNeighbours = computed(() =>
-  editingId.value ? neighboursOf(editingId.value) : { prev: null, next: null },
-);
 function saveEdits(e: { note: string; start: number; end: number | null }) {
-  if (editingId.value) {
+  const d = draftNew.value;
+  if (d) {
+    if (add({ start: e.start, end: e.end ?? Date.now(), note: e.note, tags: d.tags })) buzz(15);
+  } else if (editingId.value) {
     setNote(editingId.value, e.note);
     setTimes(editingId.value, e.start, e.end);
   }
-  editingId.value = null;
+  closeEditor();
 }
 
 onMounted(() => document.addEventListener("pointerdown", closeOnOutside));
@@ -173,10 +193,13 @@ const hint = computed(() =>
       <p class="hint" aria-live="polite">{{ hint }}</p>
     </section>
 
-    <section v-if="today.length" class="log">
+    <section class="log">
       <div class="log-head">
         <span>Today</span>
-        <span>{{ duration(todayTotal) }}</span>
+        <button type="button" class="add" aria-label="Add a time window" @click="startAdding">
+          + Add
+        </button>
+        <span class="total">{{ duration(todayTotal) }}</span>
       </div>
       <TransitionGroup tag="ol" name="row">
         <li v-for="w in today" :key="w.id" :class="{ live: !w.end }">
@@ -208,10 +231,11 @@ const hint = computed(() =>
       :window="editing"
       :now="now"
       :tags="tagsByRecency"
-      :neighbours="editingNeighbours"
+      :others="others"
+      :is-new="draftNew !== null"
       @toggle-tag="onToggleTag"
       @create-tag="onCreateTag"
-      @close="editingId = null"
+      @close="closeEditor"
       @save="saveEdits"
       @delete="editing && removeWindow(editing.id)"
     />
@@ -328,10 +352,44 @@ const hint = computed(() =>
 }
 .log-head {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
   font-weight: 500;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--dot-light);
+}
+.log-head .total {
+  margin-left: auto;
+}
+.add {
+  all: unset;
+  cursor: pointer;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  border: 1px dashed var(--dot-light);
+  color: var(--muted);
+  font-size: 0.85rem;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 0.1s ease-out,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.add:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+.add:active {
+  transform: scale(0.96);
+}
+.add:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .add:active {
+    transform: none;
+  }
 }
 ol {
   position: relative;

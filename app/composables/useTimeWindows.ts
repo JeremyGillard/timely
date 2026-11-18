@@ -115,16 +115,7 @@ export function useTimeWindows() {
   /** The windows right before and after this one. */
   function neighboursOf(id: string): Neighbours {
     const self = windows.value.find((w) => w.id === id);
-    let prev: TimeWindow | null = null;
-    let next: TimeWindow | null = null;
-    if (!self) return { prev, next };
-    for (const w of windows.value) {
-      if (w.id === id) continue;
-      if (w.start < self.start) {
-        if (!prev || w.start > prev.start) prev = w;
-      } else if (!next || w.start < next.start) next = w;
-    }
-    return { prev, next };
+    return self ? neighboursAt(windows.value, self.start, id) : { prev: null, next: null };
   }
 
   /**
@@ -132,19 +123,45 @@ export function useTimeWindows() {
    * least MIN_WINDOW_MS); nothing may end in the future.
    */
   function setTimes(id: string, start: number, end: number | null) {
-    const { prev, next } = neighboursOf(id);
+    const self = windows.value.find((w) => w.id === id);
+    if (self && applyRange({ ...self, start, end })) persist();
+  }
+
+  /** Adds a finished window by hand (same overlap rules as editing). Returns its id, or null. */
+  function add(w: { start: number; end: number; note?: string; tags?: string[] }): string | null {
+    const id = crypto.randomUUID();
+    const note = w.note?.trim();
+    const created: TimeWindow = withTags(
+      { id, start: w.start, end: w.end, ...(note ? { note } : {}) },
+      w.tags ?? [],
+    );
+    if (!applyRange(created)) return null;
+    persist();
+    return id;
+  }
+
+  /**
+   * Writes `target` (new or existing) with its range clamped: it may overlap a neighbour, which
+   * is trimmed (keeping ≥ MIN_WINDOW_MS), but never swallow one or end in the future.
+   * Returns false (and changes nothing) if the clamped range is empty.
+   */
+  function applyRange(target: TimeWindow): boolean {
+    const { id, start, end } = target;
+    const { prev, next } = neighboursAt(windows.value, start, id);
     const now = Date.now();
     const s = Math.max(start, prev ? prev.start + MIN_WINDOW_MS : -Infinity);
     const e =
       end === null ? null : Math.min(end, now, next ? (next.end ?? now) - MIN_WINDOW_MS : Infinity);
-    if (s >= (e ?? now)) return; // invalid: keep the window as it was
-    windows.value = windows.value.map((w) => {
-      if (w.id === id) return { ...w, start: s, end: e };
+    if (s >= (e ?? now)) return false;
+    const updated = windows.value.map((w) => {
+      if (w.id === id) return { ...target, start: s, end: e };
       if (w.id === prev?.id && (w.end ?? now) > s) return { ...w, end: s };
       if (w.id === next?.id && e !== null && w.start < e) return { ...w, start: e };
       return w;
     });
-    persist();
+    if (!updated.some((w) => w.id === id)) updated.push({ ...target, start: s, end: e });
+    windows.value = updated.toSorted((a, b) => a.start - b.start);
+    return true;
   }
 
   /** Creates a tag, or returns the existing one with the same name (case-insensitive). */
@@ -209,11 +226,29 @@ export function useTimeWindows() {
     restore,
     neighboursOf,
     setTimes,
+    add,
     createTag,
     renameTag,
     deleteTag,
     toggleTag,
   };
+}
+
+/** prev = latest window starting before `start`, next = earliest starting at/after it. */
+export function neighboursAt(
+  windows: readonly TimeWindow[],
+  start: number,
+  excludeId?: string,
+): Neighbours {
+  let prev: TimeWindow | null = null;
+  let next: TimeWindow | null = null;
+  for (const w of windows) {
+    if (w.id === excludeId) continue;
+    if (w.start < start) {
+      if (!prev || w.start > prev.start) prev = w;
+    } else if (!next || w.start < next.start) next = w;
+  }
+  return { prev, next };
 }
 
 function withTags(w: TimeWindow, ids: string[]): TimeWindow {

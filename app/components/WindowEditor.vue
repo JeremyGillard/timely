@@ -3,7 +3,7 @@
 // Phones: bottom sheet. Larger screens: centred card.
 import {
   MIN_WINDOW_MS,
-  type Neighbours,
+  neighboursAt,
   type Tag,
   type TimeWindow,
 } from "~/composables/useTimeWindows";
@@ -13,8 +13,10 @@ const props = defineProps<{
   window: TimeWindow | null;
   now: number;
   tags: Tag[];
-  /** Windows right before / after: overlapping them trims them on Save. */
-  neighbours: Neighbours;
+  /** All other windows; the ones right before / after get trimmed on Save if overlapped. */
+  others: TimeWindow[];
+  /** Creating a new window (not yet saved) rather than editing one. */
+  isNew?: boolean;
 }>();
 const emit = defineEmits<{
   close: [];
@@ -66,8 +68,10 @@ const edge = ref<"start" | "end" | null>(null);
 const running = computed(() => draftEnd.value === null);
 const endOrNow = computed(() => draftEnd.value ?? props.now);
 
-const prev = computed(() => props.neighbours.prev);
-const next = computed(() => props.neighbours.next);
+// Neighbours follow the draft start, so a new window can be placed anywhere.
+const neighbours = computed(() => neighboursAt(props.others, draftStart.value));
+const prev = computed(() => neighbours.value.prev);
+const next = computed(() => neighbours.value.next);
 const prevEnd = computed(() => (prev.value ? (prev.value.end ?? props.now) : null));
 
 // Hard limits: may overlap a neighbour, but not swallow it (it keeps ≥ MIN_WINDOW_MS).
@@ -142,12 +146,13 @@ watch(
       draft.value = props.window?.note ?? "";
       draftStart.value = props.window?.start ?? 0;
       draftEnd.value = props.window?.end ?? null;
-      edge.value = null;
+      edge.value = props.isNew ? "start" : null;
       hint.value = "";
       order.value = props.tags.map((t) => t.id);
       adding.value = false;
       if (!el.open) el.showModal();
-      input.value?.focus();
+      // new window: times come first (and no on-screen keyboard over the ruler)
+      if (!props.isNew) input.value?.focus();
     } else if (el.open) {
       el.close();
     }
@@ -182,7 +187,9 @@ function onDialogClick(e: MouseEvent) {
     @click="onDialogClick"
   >
     <form v-if="window" class="card" @submit.prevent="save">
-      <h2 id="window-editor-title" class="sr-only">Edit time window</h2>
+      <h2 id="window-editor-title" class="sr-only">
+        {{ isNew ? "New time window" : "Edit time window" }}
+      </h2>
       <header>
         <div class="range">
           <button
@@ -284,10 +291,10 @@ function onDialogClick(e: MouseEvent) {
       </label>
 
       <div class="actions">
-        <button type="button" class="delete" @click="emit('delete')">Delete</button>
+        <button v-if="!isNew" type="button" class="delete" @click="emit('delete')">Delete</button>
         <span class="spacer" />
         <button type="button" class="ghost" @click="emit('close')">Cancel</button>
-        <button type="submit" class="primary">Save</button>
+        <button type="submit" class="primary">{{ isNew ? "Add" : "Save" }}</button>
       </div>
     </form>
   </dialog>

@@ -52,3 +52,40 @@ export function splitByDay(start: number, end: number): { day: number; ms: numbe
 }
 
 export { DAY_MS };
+
+/**
+ * Suggested range for a manually added window today, never overlapping existing ones:
+ * the most recent untracked gap (≥ 1 min; its last 30 min if longer), else the 30 min
+ * before today's first window, else the last 30 min. Rounded to whole minutes.
+ */
+export function defaultRange(
+  windows: readonly { start: number; end: number | null }[],
+  now: number,
+  length = 30 * 60_000,
+): { start: number; end: number } {
+  const MIN = 60_000;
+  const floorMin = (ms: number) => Math.floor(ms / MIN) * MIN;
+  const ceilMin = (ms: number) => Math.ceil(ms / MIN) * MIN;
+  const dayStart = startOfDay(now);
+  const today = windows
+    .filter((w) => (w.end ?? now) > dayStart)
+    .toSorted((a, b) => a.start - b.start);
+  if (!today.length) return { start: floorMin(now) - length, end: floorMin(now) };
+
+  // gaps between consecutive windows, plus the one up to now if nothing is running
+  const gaps: { start: number; end: number }[] = [];
+  let cursor = Math.max(dayStart, today[0]!.start);
+  for (const w of today) {
+    if (w.start > cursor) gaps.push({ start: cursor, end: w.start });
+    cursor = Math.max(cursor, w.end ?? now);
+  }
+  if (cursor < now) gaps.push({ start: cursor, end: now });
+
+  for (const g of gaps.toReversed()) {
+    const start = ceilMin(g.start);
+    const end = floorMin(g.end);
+    if (end - start >= MIN) return { start: Math.max(start, end - length), end };
+  }
+  const first = floorMin(today[0]!.start);
+  return { start: first - length, end: first };
+}
