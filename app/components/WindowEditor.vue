@@ -216,22 +216,27 @@ watch(
 const hint = ref("");
 let hintTimer: ReturnType<typeof setTimeout> | undefined;
 function onLimit(side: "min" | "max") {
+  const PAST_NOW = "Can't go past now — use the timer for ongoing time";
   if (edge.value === "start") {
-    hint.value =
-      side === "max"
-        ? "Must start before it ends"
-        : prev.value
+    if (side === "max")
+      // creating: Start drags the whole window, so its end is what hits now
+      hint.value = props.isNew
+        ? PAST_NOW
+        : running.value
+          ? "Must start before now"
+          : "Must start before it ends";
+    else
+      hint.value =
+        !props.isNew && prev.value
           ? "Can't go past the start of the previous window"
-          : props.isNew
-            ? "Up to 24 h back, ending by now"
-            : "Up to 24 h back";
+          : "Up to 24 h back";
   } else {
     hint.value =
       side === "min"
         ? "Must end after it starts"
-        : next.value && endMax.value < props.now
-          ? "Can't go past the end of the next window"
-          : "Can't end in the future";
+        : endMax.value >= props.now
+          ? PAST_NOW
+          : "Can't go past the end of the next window";
   }
   clearTimeout(hintTimer);
   hintTimer = setTimeout(() => (hint.value = ""), 2500);
