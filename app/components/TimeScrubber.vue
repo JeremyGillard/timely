@@ -12,8 +12,15 @@ const props = defineProps<{
   min: number;
   max: number;
   label: string;
-  /** Time taken by other windows ([start, end] ms): those ticks are tinted as overlap. */
-  busy?: [number, number][];
+  /** Other windows, drawn as grey blocks along the bottom of the ruler. */
+  busy?: { start: number; end: number; label: string }[];
+  /**
+   * The window being edited, drawn as a block that follows the needle live:
+   * "start" → [value, other], "end" → [other, value], "move" → [value, value + other (length)].
+   */
+  band?: { kind: "start" | "end" | "move"; other: number };
+  /** The current placement can't be saved: overlap shown red instead of amber. */
+  conflict?: boolean;
 }>();
 const model = defineModel<number>({ required: true });
 const emit = defineEmits<{ limit: [side: "min" | "max"] }>();
@@ -68,6 +75,7 @@ function show(m: number) {
 
 // ---------- spring ----------
 let stopSpring: (() => void) | null = null;
+let springTarget = 0; // where the running spring is headed (keyboard steps build on it)
 const halt = () => {
   stopSpring?.();
   stopSpring = null;
@@ -75,6 +83,7 @@ const halt = () => {
 function settleTo(target: number, velocity = 0, bouncy = false) {
   halt();
   if (prefersReducedMotion() || target === pos.value) return show(target);
+  springTarget = target;
   stopSpring = animateSpring({
     from: pos.value,
     to: target,
@@ -167,7 +176,8 @@ function onWheel(e: WheelEvent) {
 // ---------- keyboard ----------
 function onKey(e: KeyboardEvent) {
   const step = e.shiftKey ? 5 : 1;
-  const base = Math.round(pos.value);
+  // repeated presses build on where the value is heading, not where the animation is now
+  const base = stopSpring ? springTarget : Math.round(pos.value);
   let target: number | null = null;
   if (e.key === "ArrowRight" || e.key === "ArrowUp") target = base + step;
   else if (e.key === "ArrowLeft" || e.key === "ArrowDown") target = base - step;
@@ -189,26 +199,53 @@ onBeforeUnmount(() => {
 // ---------- render ----------
 const center = computed(() => Math.round(pos.value));
 const ticks = computed(() => {
-  const out: {
-    m: number;
-    major: boolean;
-    out: boolean;
-    overlap: boolean;
-    text: string | null;
-  }[] = [];
-  const busy = (props.busy ?? []).map(([a, b]) => [a / MIN, b / MIN] as const);
+  const out: { m: number; major: boolean; out: boolean; text: string | null }[] = [];
   for (let m = center.value - VISIBLE; m <= center.value + VISIBLE; m++) {
     const major = m % 5 === 0;
     out.push({
       m,
       major,
       out: m < Math.ceil(lo.value) || m > Math.floor(hi.value),
-      overlap: busy.some(([a, b]) => m > a && m < b),
       text: major ? clock(m * MIN) : null,
     });
   }
   return out;
 });
+// Blocks (minutes, clipped to what's rendered so 24 h-wide windows stay cheap)
+const view = computed(() => [center.value - VISIBLE - 2, center.value + VISIBLE + 2] as const);
+const place = (a: number, b: number) => {
+  const [v0, v1] = view.value;
+  const s = Math.max(a, v0);
+  const e = Math.min(b, v1);
+  return e > s ? { left: `${(s - anchor) * PX}px`, width: `${(e - s) * PX}px` } : null;
+};
+const busyBlocks = computed(() =>
+  (props.busy ?? []).flatMap((w) => {
+    const style = place(w.start / MIN, w.end / MIN);
+    // label only when the block is wide enough to hold it
+    return style
+      ? [{ key: w.start, style, label: (w.end - w.start) / MIN >= 8 ? w.label : "" }]
+      : [];
+  }),
+);
+const self = computed(() => {
+  const b = props.band;
+  if (!b) return null;
+  const other = b.other / MIN;
+  const p = pos.value;
+  return b.kind === "start" ? [p, other] : b.kind === "end" ? [other, p] : [p, p + other];
+});
+const selfBlock = computed(() => (self.value ? place(self.value[0]!, self.value[1]!) : null));
+/** Where the edited window covers another one. */
+const overlapBlocks = computed(() => {
+  const s = self.value;
+  if (!s) return [];
+  return (props.busy ?? []).flatMap((w) => {
+    const style = place(Math.max(s[0]!, w.start / MIN), Math.min(s[1]!, w.end / MIN));
+    return style ? [{ key: w.start, style }] : [];
+  });
+});
+
 const trackStyle = computed(() => ({ transform: `translateX(${-(pos.value - anchor) * PX}px)` }));
 const valueText = computed(() => `${props.label} ${clock(model.value)}`);
 </script>
@@ -237,11 +274,22 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
         v-for="t in ticks"
         :key="t.m"
         class="tick"
-        :class="{ major: t.major, out: t.out, overlap: t.overlap }"
+        :class="{ major: t.major, out: t.out }"
         :style="{ left: `${(t.m - anchor) * PX}px` }"
       >
         <span v-if="t.text" class="label">{{ t.text }}</span>
       </span>
+      <span v-for="b in busyBlocks" :key="b.key" class="block busy" :style="b.style">
+        {{ b.label }}
+      </span>
+      <span v-if="selfBlock" class="block self" :style="selfBlock" />
+      <span
+        v-for="o in overlapBlocks"
+        :key="`o${o.key}`"
+        class="block overlap"
+        :class="{ conflict }"
+        :style="o.style"
+      />
     </div>
     <span class="needle" aria-hidden="true" />
   </div>
@@ -250,7 +298,7 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
 <style scoped>
 .scrubber {
   position: relative;
-  height: 64px;
+  height: 76px;
   overflow: hidden;
   border-radius: 14px;
   background: #fff;
@@ -286,8 +334,43 @@ const valueText = computed(() => `${props.label} ${clock(model.value)}`);
   height: 20px;
   background: var(--muted);
 }
-.tick.overlap {
-  background: var(--warning);
+.block {
+  position: absolute;
+  bottom: 8px;
+  height: 16px;
+  border-radius: 5px;
+  overflow: hidden;
+  padding: 0 6px;
+  font-size: 0.65rem;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* other windows: neutral, quiet */
+.block.busy {
+  background: color-mix(in srgb, var(--muted) 28%, #fff);
+  color: color-mix(in srgb, var(--muted) 60%, var(--ink));
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+/* the window being edited: the accent, it's "yours" */
+.block.self {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+  opacity: 0.9;
+}
+/* collision: striped amber (will be trimmed) or red (can't save) */
+.block.overlap {
+  --c: var(--warning);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--c) 0 4px,
+    color-mix(in srgb, var(--c) 45%, #fff) 4px 8px
+  );
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+.block.overlap.conflict {
+  --c: var(--danger);
 }
 .tick.out {
   opacity: 0.3;

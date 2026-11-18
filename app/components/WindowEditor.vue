@@ -103,9 +103,19 @@ const startModel = computed({
     draftStart.value = v;
   },
 });
-/** Other windows' time on the ruler, tinted as "taken". */
+/** Other windows, drawn as blocks on the ruler. */
 const busy = computed(() =>
-  props.others.map((w): [number, number] => [w.start, w.end ?? props.now]),
+  props.others.map((w) => ({
+    start: w.start,
+    end: w.end ?? props.now,
+    label: w.note ?? `${clock(w.start)} – ${w.end ? clock(w.end) : "now"}`,
+  })),
+);
+/** How the edited window's own block follows the ruler. */
+const startBand = computed(() =>
+  props.isNew
+    ? { kind: "move" as const, other: length.value }
+    : { kind: "start" as const, other: endOrNow.value },
 );
 
 // What saving would do to the other windows.
@@ -259,6 +269,8 @@ function onDialogClick(e: MouseEvent) {
             :min="startMin"
             :max="startMax"
             :busy="busy"
+            :band="startBand"
+            :conflict="blocked"
             label="Start"
             @limit="onLimit"
           />
@@ -269,6 +281,8 @@ function onDialogClick(e: MouseEvent) {
             :min="endMin"
             :max="endMax"
             :busy="busy"
+            :band="{ kind: 'end', other: draftStart }"
+            :conflict="blocked"
             label="End"
             @limit="onLimit"
           />
