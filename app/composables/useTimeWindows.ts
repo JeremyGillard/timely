@@ -135,7 +135,18 @@ export function useTimeWindows() {
       { id, start: w.start, end: w.end, ...(note ? { note } : {}) },
       w.tags ?? [],
     );
-    if (!applyRange(created)) return null;
+    const now = Date.now();
+    if (created.end! > now || created.start >= created.end!) return null;
+    const plan = planRange(windows.value, created.start, created.end!, now);
+    if (plan.conflicts.length) return null;
+    const trimmed = new Map(plan.trims.map((t) => [t.window.id, t]));
+    windows.value = [
+      ...windows.value.map((x) => {
+        const t = trimmed.get(x.id);
+        return t ? { ...x, start: t.start, end: t.end } : x;
+      }),
+      created,
+    ].toSorted((a, b) => a.start - b.start);
     persist();
     return id;
   }
@@ -232,6 +243,40 @@ export function useTimeWindows() {
     deleteTag,
     toggleTag,
   };
+}
+
+export interface RangePlan {
+  /** Windows partly overlapped: they get shortened to these times. */
+  trims: { window: TimeWindow; start: number; end: number | null }[];
+  /** Windows that would be swallowed, or that contain the whole range: the range can't be used. */
+  conflicts: TimeWindow[];
+}
+
+/** What placing [start, end) among `windows` would do to them. */
+export function planRange(
+  windows: readonly TimeWindow[],
+  start: number,
+  end: number,
+  now: number,
+  excludeId?: string,
+): RangePlan {
+  const plan: RangePlan = { trims: [], conflicts: [] };
+  for (const w of windows) {
+    if (w.id === excludeId) continue;
+    const wEnd = w.end ?? now;
+    if (wEnd <= start || w.start >= end) continue; // no overlap
+    if (w.start < start && wEnd > end) plan.conflicts.push(w); // range sits inside it
+    else if (w.start < start) {
+      // overlaps its tail → it ends where the range starts
+      if (start - w.start < MIN_WINDOW_MS) plan.conflicts.push(w);
+      else plan.trims.push({ window: w, start: w.start, end: start });
+    } else if (wEnd > end) {
+      // overlaps its head → it starts where the range ends
+      if (wEnd - end < MIN_WINDOW_MS) plan.conflicts.push(w);
+      else plan.trims.push({ window: w, start: end, end: w.end });
+    } else plan.conflicts.push(w); // swallowed whole
+  }
+  return plan;
 }
 
 /** prev = latest window starting before `start`, next = earliest starting at/after it. */

@@ -4,6 +4,7 @@
 import {
   MIN_WINDOW_MS,
   neighboursAt,
+  planRange,
   type Tag,
   type TimeWindow,
 } from "~/composables/useTimeWindows";
@@ -72,39 +73,66 @@ const endOrNow = computed(() => draftEnd.value ?? props.now);
 const neighbours = computed(() => neighboursAt(props.others, draftStart.value));
 const prev = computed(() => neighbours.value.prev);
 const next = computed(() => neighbours.value.next);
-const prevEnd = computed(() => (prev.value ? (prev.value.end ?? props.now) : null));
 
-// Hard limits: may overlap a neighbour, but not swallow it (it keeps ≥ MIN_WINDOW_MS).
+// Hard limits.
+// Editing: may overlap a neighbour, but not swallow it (it keeps ≥ MIN_WINDOW_MS).
+// Creating: free placement over the last 24 h; Start moves the whole window (End sets its
+// length), and conflicts (swallowing / sitting inside a window) block Add instead.
+const length = computed(() => endOrNow.value - draftStart.value);
 const startMin = computed(() =>
-  prev.value ? prev.value.start + MIN_WINDOW_MS : (props.window?.start ?? 0) - DAY_MS,
+  props.isNew
+    ? props.now - DAY_MS
+    : prev.value
+      ? prev.value.start + MIN_WINDOW_MS
+      : (props.window?.start ?? 0) - DAY_MS,
 );
-const startMax = computed(() => endOrNow.value - MIN_WINDOW_MS);
+const startMax = computed(() =>
+  props.isNew ? props.now - length.value : endOrNow.value - MIN_WINDOW_MS,
+);
 const endMin = computed(() => draftStart.value + MIN_WINDOW_MS);
 const endMax = computed(() =>
-  Math.min(props.now, next.value ? (next.value.end ?? props.now) - MIN_WINDOW_MS : Infinity),
+  props.isNew
+    ? props.now
+    : Math.min(props.now, next.value ? (next.value.end ?? props.now) - MIN_WINDOW_MS : Infinity),
+);
+/** v-model for the Start ruler: creating moves the whole window, editing moves the start. */
+const startModel = computed({
+  get: () => draftStart.value,
+  set: (v: number) => {
+    if (props.isNew && draftEnd.value !== null) draftEnd.value = v + length.value;
+    draftStart.value = v;
+  },
+});
+/** Other windows' time on the ruler, tinted as "taken". */
+const busy = computed(() =>
+  props.others.map((w): [number, number] => [w.start, w.end ?? props.now]),
 );
 
-// Soft limits: past these the edit overlaps a neighbour, which Save will trim.
-const overlapsPrev = computed(() => prevEnd.value !== null && draftStart.value < prevEnd.value);
-const overlapsNext = computed(
-  () => next.value !== null && draftEnd.value !== null && draftEnd.value > next.value.start,
-);
+// What saving would do to the other windows.
+const plan = computed(() => planRange(props.others, draftStart.value, endOrNow.value, props.now));
+const blocked = computed(() => plan.value.conflicts.length > 0);
+const span = (w: { start: number; end: number | null }) =>
+  `${clock(w.start)} – ${w.end ? clock(w.end) : "now"}`;
 const warning = computed(() => {
-  const parts: string[] = [];
-  if (overlapsPrev.value && prev.value)
-    parts.push(
-      `Overlaps the previous window (${clock(prev.value.start)} – ${clock(prevEnd.value!)}): it will end at ${clock(draftStart.value)}.`,
-    );
-  if (overlapsNext.value && next.value)
-    parts.push(
-      `Overlaps the next window (${clock(next.value.start)} – ${next.value.end ? clock(next.value.end) : "now"}): it will start at ${clock(draftEnd.value!)}.`,
-    );
+  const parts = plan.value.trims.map((t) =>
+    t.start !== t.window.start
+      ? `Overlaps ${span(t.window)}: it will start at ${clock(t.start)}.`
+      : `Overlaps ${span(t.window)}: it will end at ${clock(t.end!)}.`,
+  );
+  for (const w of plan.value.conflicts) {
+    const inside = w.start < draftStart.value && (w.end ?? props.now) > endOrNow.value;
+    parts.push(inside ? `Falls inside ${span(w)}.` : `Covers ${span(w)}.`);
+  }
+  if (blocked.value) parts.push("Move or resize it to save.");
   return parts.join(" ");
 });
 // one firm bump when an edit starts overlapping
-watch([overlapsPrev, overlapsNext], ([a, b], [wasA, wasB]) => {
-  if ((a && !wasA) || (b && !wasB)) navigator.vibrate?.(10);
-});
+watch(
+  () => plan.value.trims.length + plan.value.conflicts.length,
+  (n, was) => {
+    if (n > was) navigator.vibrate?.(10);
+  },
+);
 
 const hint = ref("");
 let hintTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,7 +143,9 @@ function onLimit(side: "min" | "max") {
         ? "Must start before it ends"
         : prev.value
           ? "Can't go past the start of the previous window"
-          : "Up to 24 h back";
+          : props.isNew
+            ? "Up to 24 h back, ending by now"
+            : "Up to 24 h back";
   } else {
     hint.value =
       side === "min"
@@ -127,6 +157,9 @@ function onLimit(side: "min" | "max") {
   clearTimeout(hintTimer);
   hintTimer = setTimeout(() => (hint.value = ""), 2500);
 }
+const rulerCaption = computed(
+  () => hint.value || (props.isNew && edge.value === "start" ? "Moves the whole window" : ""),
+);
 function pick(which: "start" | "end") {
   edge.value = edge.value === which ? null : which;
   hint.value = "";
@@ -161,6 +194,7 @@ watch(
 );
 
 function save() {
+  if (blocked.value) return;
   emit("save", { note: draft.value, start: draftStart.value, end: draftEnd.value });
 }
 
@@ -221,10 +255,10 @@ function onDialogClick(e: MouseEvent) {
           <TimeScrubber
             v-if="edge === 'start'"
             key="start"
-            v-model="draftStart"
+            v-model="startModel"
             :min="startMin"
             :max="startMax"
-            :soft-min="prevEnd ?? undefined"
+            :busy="busy"
             label="Start"
             @limit="onLimit"
           />
@@ -234,15 +268,15 @@ function onDialogClick(e: MouseEvent) {
             v-model="draftEnd"
             :min="endMin"
             :max="endMax"
-            :soft-max="next?.start"
+            :busy="busy"
             label="End"
             @limit="onLimit"
           />
-          <p class="limit-hint" aria-live="polite">{{ hint }}</p>
+          <p class="limit-hint" aria-live="polite">{{ rulerCaption }}</p>
         </div>
       </Transition>
 
-      <p v-if="warning" class="overlap-warning" role="status">
+      <p v-if="warning" class="overlap-warning" :class="{ blocked }" role="status">
         <span aria-hidden="true">⚠︎</span> {{ warning }}
       </p>
 
@@ -294,7 +328,9 @@ function onDialogClick(e: MouseEvent) {
         <button v-if="!isNew" type="button" class="delete" @click="emit('delete')">Delete</button>
         <span class="spacer" />
         <button type="button" class="ghost" @click="emit('close')">Cancel</button>
-        <button type="submit" class="primary">{{ isNew ? "Add" : "Save" }}</button>
+        <button type="submit" class="primary" :disabled="blocked">
+          {{ isNew ? "Add" : "Save" }}
+        </button>
       </div>
     </form>
   </dialog>
@@ -388,6 +424,14 @@ header {
   color: color-mix(in srgb, var(--warning) 55%, var(--ink));
   font-size: 0.85rem;
   line-height: 1.35;
+}
+.overlap-warning.blocked {
+  background: color-mix(in srgb, var(--danger) 12%, #fff);
+  color: color-mix(in srgb, var(--danger) 60%, var(--ink));
+}
+.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .limit-hint {
   margin: 0;

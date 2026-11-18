@@ -12,9 +12,8 @@ const props = defineProps<{
   min: number;
   max: number;
   label: string;
-  /** Past these (but within min/max) the value is allowed and shown as an overlap. */
-  softMin?: number;
-  softMax?: number;
+  /** Time taken by other windows ([start, end] ms): those ticks are tinted as overlap. */
+  busy?: [number, number][];
 }>();
 const model = defineModel<number>({ required: true });
 const emit = defineEmits<{ limit: [side: "min" | "max"] }>();
@@ -197,15 +196,14 @@ const ticks = computed(() => {
     overlap: boolean;
     text: string | null;
   }[] = [];
-  const softLo = props.softMin === undefined ? -Infinity : props.softMin / MIN;
-  const softHi = props.softMax === undefined ? Infinity : props.softMax / MIN;
+  const busy = (props.busy ?? []).map(([a, b]) => [a / MIN, b / MIN] as const);
   for (let m = center.value - VISIBLE; m <= center.value + VISIBLE; m++) {
     const major = m % 5 === 0;
     out.push({
       m,
       major,
       out: m < Math.ceil(lo.value) || m > Math.floor(hi.value),
-      overlap: m < softLo || m > softHi,
+      overlap: busy.some(([a, b]) => m > a && m < b),
       text: major ? clock(m * MIN) : null,
     });
   }
