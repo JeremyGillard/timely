@@ -6,6 +6,13 @@ const items = [
   { to: "/week", label: "Week", icon: "week" },
   { to: "/stats", label: "Stats", icon: "stats" },
 ] as const;
+
+// Week + Stats share the browsed week (?week=…), so carry it between them.
+const route = useRoute();
+const linkTo = (path: string) => {
+  const week = route.query.week;
+  return path !== "/" && typeof week === "string" ? { path, query: { week } } : path;
+};
 </script>
 
 <template>
@@ -13,9 +20,10 @@ const items = [
     <NuxtLink
       v-for="item in items"
       :key="item.to"
-      :to="item.to"
+      :to="linkTo(item.to)"
       class="item"
-      exact-active-class="active"
+      :class="{ active: route.path === item.to }"
+      :aria-current="route.path === item.to ? 'page' : undefined"
     >
       <span class="icon" aria-hidden="true">
         <svg

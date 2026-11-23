@@ -10,18 +10,18 @@ const now = useNow();
 const HOUR = 3_600_000;
 
 // ---------- weekly goal ----------
-const weekStart = computed(() => startOfWeek(now.value));
+const { weekStart, weekEnd, isCurrent, label } = useSelectedWeek();
+/** Where Week/Month/trend are anchored: now for the current week, else the selected Monday. */
+const anchor = computed(() => (isCurrent.value ? now.value : weekStart.value));
 const weekDone = computed(() => {
   let ms = 0;
-  for (const v of tagTotals(
-    windows.value,
-    weekStart.value,
-    addDays(weekStart.value, 7),
-    now.value,
-  ).values())
+  for (const v of tagTotals(windows.value, weekStart.value, weekEnd.value, now.value).values())
     ms += v;
   return ms;
 });
+const weekName = computed(() =>
+  label.value.startsWith("Week") ? `in ${label.value.toLowerCase()}` : label.value.toLowerCase(),
+);
 const targetMs = computed(() => settings.value.weeklyTargetH * HOUR);
 const progress = computed(() => weekDone.value / targetMs.value);
 const remaining = computed(() => targetMs.value - weekDone.value);
@@ -46,9 +46,13 @@ const periods: { id: Period; label: string }[] = [
   { id: "month", label: "Month" },
   { id: "all", label: "All" },
 ];
-const range = computed(() => periodRange(period.value, now.value, windows.value));
+const range = computed(() =>
+  period.value === "all"
+    ? periodRange("all", now.value, windows.value)
+    : periodRange(period.value, anchor.value, windows.value),
+);
 const tagById = computed(() => new Map(tags.value.map((t) => [t.id, t])));
-const trend = computed(() => weeklyTagTrend(windows.value, now.value, 8));
+const trend = computed(() => weeklyTagTrend(windows.value, now.value, 8, anchor.value));
 
 const rows = computed(() => {
   const totals = tagTotals(windows.value, range.value.from, range.value.to, now.value);
@@ -109,17 +113,19 @@ function saveEdits(e: { note: string; start: number; end: number | null }) {
   <main class="page">
     <h1 class="page-title">Stats</h1>
 
+    <WeekStepper />
+
     <!-- weekly goal -->
     <section class="goal" aria-labelledby="goal-title">
       <h2 id="goal-title" class="sr-only">Weekly goal</h2>
       <GoalRing :progress="progress">
         <div class="goal-center">
           <span class="goal-done">{{ hoursMinutes(weekDone) }}</span>
-          <span class="goal-of">of {{ settings.weeklyTargetH }} h this week</span>
+          <span class="goal-of">of {{ settings.weeklyTargetH }} h {{ weekName }}</span>
           <span class="goal-left" :class="{ reached: remaining <= 0 }">
             {{
               remaining > 0
-                ? `${hoursMinutes(remaining)} to go`
+                ? `${hoursMinutes(remaining)} ${isCurrent ? "to go" : "short"}`
                 : `Goal reached${remaining < 0 ? ` · +${hoursMinutes(-remaining)}` : ""}`
             }}
           </span>

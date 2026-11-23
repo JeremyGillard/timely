@@ -1,14 +1,12 @@
 <script setup lang="ts">
-useHead({ title: "This week · Timely" });
-
 const { windows, tags } = useTimeWindows();
 const now = useNow();
 
 const HOUR = 3_600_000;
 const MIN_SPAN_H = 8; // the clock range shows at least 8 h
 
-const weekStart = computed(() => startOfWeek(now.value));
-const weekEnd = computed(() => addDays(weekStart.value, 7));
+const { weekStart, weekEnd, label } = useSelectedWeek();
+useHead({ title: () => `${label.value} · Timely` });
 const today = computed(() => startOfDay(now.value));
 
 /** Time per day (Mon → Sun), windows crossing midnight split across days, running window live. */
@@ -109,22 +107,16 @@ const legend = computed(() => {
   if (untagged) items.push({ name: "Untagged", color: "var(--accent)" });
   return items;
 });
-
-const range = computed(() =>
-  new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).formatRange(
-    new Date(weekStart.value),
-    new Date(weekEnd.value - 1),
-  ),
-);
 </script>
 
 <template>
   <main class="page">
-    <h1 class="page-title">This week</h1>
+    <h1 class="page-title">{{ label }}</h1>
+    <WeekStepper />
 
     <section class="summary">
       <p class="total">{{ hoursMinutes(total) }}</p>
-      <p class="caption">hours tracked · {{ range }}</p>
+      <p class="caption">hours tracked</p>
     </section>
 
     <div class="axis" aria-hidden="true">

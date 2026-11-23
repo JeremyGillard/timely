@@ -48,6 +48,20 @@ describe("weeklyTagTrend", () => {
     expect(weekStarts).toEqual([at(2, 0), at(9, 0), at(16, 0)]);
     expect(byTag.get("a")).toEqual([0, 3 * H, H]);
   });
+
+  it("ends with the anchor's week when one is given", () => {
+    const { weekStarts, byTag } = weeklyTagTrend(
+      [
+        { start: at(16, 9), end: at(16, 10), tags: ["a"] }, // after the anchor: ignored
+        { start: at(10, 9), end: at(10, 12), tags: ["a"] },
+      ],
+      NOW,
+      2,
+      at(11, 0),
+    );
+    expect(weekStarts).toEqual([at(2, 0), at(9, 0)]);
+    expect(byTag.get("a")).toEqual([0, 3 * H]);
+  });
 });
 
 describe("periodRange", () => {

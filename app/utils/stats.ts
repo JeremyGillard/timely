@@ -26,13 +26,17 @@ export function tagTotals(
   return totals;
 }
 
-/** Per first tag, time in each of the `weeks` weeks ending with the current one (oldest first). */
+/**
+ * Per first tag, time in each of the `weeks` weeks ending with the one containing `anchor`
+ * (default: the current week), oldest first. Running windows count up to `now`.
+ */
 export function weeklyTagTrend(
   windows: readonly Win[],
   now: number,
   weeks = 8,
+  anchor = now,
 ): { weekStarts: number[]; byTag: Map<string | null, number[]> } {
-  const current = startOfWeek(now);
+  const current = startOfWeek(anchor);
   const weekStarts = Array.from({ length: weeks }, (_, i) => addDays(current, (i - weeks + 1) * 7));
   const byTag = new Map<string | null, number[]>();
   weekStarts.forEach((ws, i) => {

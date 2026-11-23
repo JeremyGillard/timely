@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { defaultRange } from "./time";
+import { defaultRange, isoWeek, parseWeekParam, weekLabel, weekParam } from "./time";
 
 const M = 60_000;
 // 2026-11-18 14:00 local, well clear of midnight
@@ -48,5 +48,38 @@ describe("defaultRange", () => {
   it("goes before the first window when one has been running since", () => {
     const ws = [{ start: at(9, 15), end: null }];
     expect(defaultRange(ws, NOW)).toEqual({ start: at(8, 45), end: at(9, 15) });
+  });
+});
+
+describe("week param", () => {
+  const MON = new Date(2026, 10, 16).getTime();
+
+  it("formats the Monday of the week as YYYY-MM-DD", () => {
+    expect(weekParam(NOW)).toBe("2026-11-16");
+  });
+
+  it("parses any day to its Monday, round-tripping", () => {
+    expect(parseWeekParam("2026-11-12", NOW)).toBe(new Date(2026, 10, 9).getTime());
+    expect(parseWeekParam(weekParam(MON - 86_400_000), NOW)).toBe(new Date(2026, 10, 9).getTime());
+  });
+
+  it("falls back to the current week for missing, invalid or future values", () => {
+    for (const p of [undefined, "", "foo", "2026-02-30", ["2026-11-09"], "2027-01-04"])
+      expect(parseWeekParam(p, NOW)).toBe(MON);
+  });
+});
+
+describe("weekLabel / isoWeek", () => {
+  it("names this and last week, numbers older ones", () => {
+    const MON = new Date(2026, 10, 16).getTime();
+    expect(weekLabel(MON, NOW)).toBe("This week");
+    expect(weekLabel(new Date(2026, 10, 9).getTime(), NOW)).toBe("Last week");
+    expect(weekLabel(new Date(2026, 10, 2).getTime(), NOW)).toBe("Week 45");
+  });
+
+  it("follows ISO numbering across year boundaries", () => {
+    expect(isoWeek(new Date(2026, 0, 1).getTime())).toBe(1); // Thu
+    expect(isoWeek(new Date(2027, 0, 1).getTime())).toBe(53); // Fri → 2026-W53
+    expect(isoWeek(new Date(2025, 11, 29).getTime())).toBe(1); // Mon → 2026-W01
   });
 });

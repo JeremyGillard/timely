@@ -51,6 +51,40 @@ export function splitByDay(start: number, end: number): { day: number; ms: numbe
   return chunks;
 }
 
+/** Local date of a week's Monday as "YYYY-MM-DD" (URL param for the selected week). */
+export function weekParam(ms: number): string {
+  const d = new Date(startOfWeek(ms));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Monday 00:00 of the week named by a "YYYY-MM-DD" param; invalid, missing or future → current week. */
+export function parseWeekParam(param: unknown, now: number): number {
+  const current = startOfWeek(now);
+  if (typeof param !== "string") return current;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(param);
+  if (!m) return current;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  const date = new Date(y, mo, d);
+  if (date.getFullYear() !== y || date.getMonth() !== mo || date.getDate() !== d) return current;
+  return Math.min(startOfWeek(date.getTime()), current);
+}
+
+/** ISO-8601 week number (weeks start Monday; week 1 holds the year's first Thursday). */
+export function isoWeek(ms: number): number {
+  const thursday = new Date(addDays(startOfWeek(ms), 3));
+  const jan1 = new Date(thursday.getFullYear(), 0, 1).getTime();
+  return Math.floor(Math.round((thursday.getTime() - jan1) / DAY_MS) / 7) + 1;
+}
+
+/** "This week" / "Last week" / "Week 46". */
+export function weekLabel(weekStart: number, now: number): string {
+  const current = startOfWeek(now);
+  if (weekStart === current) return "This week";
+  if (weekStart === addDays(current, -7)) return "Last week";
+  return `Week ${isoWeek(weekStart)}`;
+}
+
 export { DAY_MS };
 
 /**
