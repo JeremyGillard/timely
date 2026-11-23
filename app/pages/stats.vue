@@ -10,7 +10,7 @@ const now = useNow();
 const HOUR = 3_600_000;
 
 // ---------- weekly goal ----------
-const { weekStart, weekEnd, isCurrent, label } = useSelectedWeek();
+const { weekStart, weekEnd, isCurrent, label, range: weekRange } = useSelectedWeek();
 /** Where Week/Month/trend are anchored: now for the current week, else the selected Monday. */
 const anchor = computed(() => (isCurrent.value ? now.value : weekStart.value));
 const weekDone = computed(() => {
@@ -76,6 +76,33 @@ const rows = computed(() => {
   return { list, sum, max: Math.max(1, ...list.map((r) => r.ms)) };
 });
 const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+// ---------- export ----------
+const exportList = computed(() =>
+  exportRows(windows.value, tags.value, range.value.from, range.value.to),
+);
+const periodName = computed(() =>
+  period.value === "week"
+    ? weekRange.value
+    : period.value === "month"
+      ? new Date(range.value.from).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+      : "all time",
+);
+const runningExcluded = computed(() =>
+  windows.value.some(
+    (w) => w.end === null && w.start >= range.value.from && w.start < range.value.to,
+  ),
+);
+function exportAs(kind: "csv" | "ics") {
+  const { from, to } = range.value; // "all": earliest window → today
+  void (kind === "csv"
+    ? saveFile(exportFilename(from, to, "csv"), toCsv(exportList.value), "text/csv")
+    : saveFile(
+        exportFilename(from, to, "ics"),
+        toIcs(exportList.value, Date.now()),
+        "text/calendar",
+      ));
+}
 
 // ---------- untagged windows ----------
 const showUntagged = ref(false);
@@ -262,6 +289,21 @@ function saveEdits(e: { note: string; start: number; end: number | null }) {
           </li>
         </ul>
       </template>
+
+      <div class="export" role="group" aria-label="Export">
+        <div class="export-actions">
+          <button type="button" :disabled="!exportList.length" @click="exportAs('csv')">
+            Export CSV
+          </button>
+          <button type="button" :disabled="!exportList.length" @click="exportAs('ics')">
+            Add to calendar
+          </button>
+        </div>
+        <p class="export-caption">
+          {{ exportList.length }} window{{ exportList.length === 1 ? "" : "s" }} · {{ periodName
+          }}<template v-if="runningExcluded"> · running window not included</template>
+        </p>
+      </div>
     </section>
 
     <WindowEditor
@@ -581,6 +623,49 @@ li.untagged .name {
 .u-dur,
 .u-go {
   color: var(--muted);
+}
+
+/* ---------- export ---------- */
+.export {
+  margin-top: 1.5rem;
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+}
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.export-actions button {
+  all: unset;
+  cursor: pointer;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--dot-light);
+  background: #fff;
+  font-size: 0.85rem;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s ease-out;
+}
+.export-actions button:not(:disabled):active {
+  transform: scale(0.96);
+}
+.export-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.export-actions button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.export-caption {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
 }
 
 @media (max-width: 420px) {
