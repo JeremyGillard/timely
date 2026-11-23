@@ -51,23 +51,38 @@ export function splitByDay(start: number, end: number): { day: number; ms: numbe
   return chunks;
 }
 
-/** Local date of a week's Monday as "YYYY-MM-DD" (URL param for the selected week). */
-export function weekParam(ms: number): string {
-  const d = new Date(startOfWeek(ms));
+/** Local date as "YYYY-MM-DD" (URL param for a selected day). */
+export function dayParam(ms: number): string {
+  const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Local date of a week's Monday as "YYYY-MM-DD" (URL param for the selected week). */
+export const weekParam = (ms: number): string => dayParam(startOfWeek(ms));
+
+/** Local midnight of a real "YYYY-MM-DD" date, else null. */
+function parseDate(param: unknown): number | null {
+  if (typeof param !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(param);
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  const date = new Date(y, mo, d);
+  if (date.getFullYear() !== y || date.getMonth() !== mo || date.getDate() !== d) return null;
+  return date.getTime();
+}
+
+/** Midnight of the day named by a "YYYY-MM-DD" param; invalid, missing or future → today. */
+export function parseDayParam(param: unknown, now: number): number {
+  const today = startOfDay(now);
+  return Math.min(parseDate(param) ?? today, today);
 }
 
 /** Monday 00:00 of the week named by a "YYYY-MM-DD" param; invalid, missing or future → current week. */
 export function parseWeekParam(param: unknown, now: number): number {
   const current = startOfWeek(now);
-  if (typeof param !== "string") return current;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(param);
-  if (!m) return current;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
-  const date = new Date(y, mo, d);
-  if (date.getFullYear() !== y || date.getMonth() !== mo || date.getDate() !== d) return current;
-  return Math.min(startOfWeek(date.getTime()), current);
+  const date = parseDate(param);
+  return date === null ? current : Math.min(startOfWeek(date), current);
 }
 
 /** ISO-8601 week number (weeks start Monday; week 1 holds the year's first Thursday). */
@@ -88,23 +103,33 @@ export function weekLabel(weekStart: number, now: number): string {
 export { DAY_MS };
 
 /**
- * Suggested range for a manually added window today, never overlapping existing ones:
- * the most recent untracked gap (≥ 1 min; its last 30 min if longer), else the 30 min
- * before today's first window, else the last 30 min. Rounded to whole minutes.
+ * Suggested range for a manually added window on `day` (midnight; default today), never
+ * overlapping existing ones: the most recent untracked gap that day (≥ 1 min; its last
+ * 30 min if longer), else the 30 min before the day's first window, else the last 30 min.
+ * A past day instead suggests right after its last window, or 09:00 when empty.
+ * Rounded to whole minutes.
  */
 export function defaultRange(
   windows: readonly { start: number; end: number | null }[],
   now: number,
   length = 30 * 60_000,
+  day = startOfDay(now),
 ): { start: number; end: number } {
   const MIN = 60_000;
   const floorMin = (ms: number) => Math.floor(ms / MIN) * MIN;
   const ceilMin = (ms: number) => Math.ceil(ms / MIN) * MIN;
-  const dayStart = startOfDay(now);
+  const dayStart = day;
+  const dayEnd = Math.min(now, addDays(day, 1)); // "now" for that day
   const today = windows
-    .filter((w) => (w.end ?? now) > dayStart)
+    .filter((w) => (w.end ?? now) > dayStart && w.start < dayEnd)
     .toSorted((a, b) => a.start - b.start);
-  if (!today.length) return { start: floorMin(now) - length, end: floorMin(now) };
+  if (!today.length) {
+    if (dayEnd < now) {
+      const nine = new Date(day).setHours(9);
+      return { start: nine, end: nine + length };
+    }
+    return { start: floorMin(now) - length, end: floorMin(now) };
+  }
 
   // gaps between consecutive windows, plus the one up to now if nothing is running
   const gaps: { start: number; end: number }[] = [];
@@ -113,7 +138,14 @@ export function defaultRange(
     if (w.start > cursor) gaps.push({ start: cursor, end: w.start });
     cursor = Math.max(cursor, w.end ?? now);
   }
-  if (cursor < now) gaps.push({ start: cursor, end: now });
+  if (cursor < dayEnd) {
+    // past day: midnight is just a cutoff, so suggest right after its last window
+    if (dayEnd < now) {
+      const start = ceilMin(cursor);
+      return { start, end: Math.min(start + length, floorMin(dayEnd)) };
+    }
+    gaps.push({ start: cursor, end: dayEnd });
+  }
 
   for (const g of gaps.toReversed()) {
     const start = ceilMin(g.start);

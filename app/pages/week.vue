@@ -35,6 +35,11 @@ const days = computed(() => {
 
 const total = computed(() => days.value.reduce((sum, d) => sum + d.ms, 0));
 
+// Past days and today open in Track, where their windows can be edited or added.
+const NuxtLink = resolveComponent("NuxtLink");
+const dayLink = (d: { day: number; isToday: boolean }) =>
+  d.isToday ? "/" : { path: "/", query: { day: dayParam(d.day) } };
+
 // ---------- clock timeline ----------
 const tagById = computed(() => new Map(tags.value.map((t) => [t.id, t])));
 
@@ -128,35 +133,37 @@ const legend = computed(() => {
     </div>
 
     <ol class="days">
-      <li
-        v-for="d in days"
-        :key="d.day"
-        :class="{ today: d.isToday, future: d.isFuture }"
-        :aria-label="`${d.weekday} ${d.date}: ${hoursMinutes(d.ms)}`"
-      >
-        <span class="day">
-          <span class="weekday">{{ d.weekday }}</span>
-          <span class="date">{{ d.date }}</span>
-        </span>
-        <span class="bar" aria-hidden="true">
-          <span
-            v-for="(s, i) in segments.get(d.day) ?? []"
-            :key="i"
-            class="seg"
-            :title="s.title"
-            :style="{
-              left: `${pct(s.from)}%`,
-              width: `${pct(s.to) - pct(s.from)}%`,
-              background: s.color,
-            }"
-          />
-          <span
-            v-if="d.isToday && nowHour >= hourRange[0] && nowHour <= hourRange[1]"
-            class="now"
-            :style="{ left: `${pct(nowHour)}%` }"
-          />
-        </span>
-        <span class="amount">{{ hoursMinutes(d.ms) }}</span>
+      <li v-for="d in days" :key="d.day" :class="{ today: d.isToday, future: d.isFuture }">
+        <component
+          :is="d.isFuture ? 'div' : NuxtLink"
+          class="row"
+          :to="d.isFuture ? undefined : dayLink(d)"
+          :aria-label="`${d.weekday} ${d.date}: ${hoursMinutes(d.ms)}${d.isFuture ? '' : ', edit'}`"
+        >
+          <span class="day">
+            <span class="weekday">{{ d.weekday }}</span>
+            <span class="date">{{ d.date }}</span>
+          </span>
+          <span class="bar" aria-hidden="true">
+            <span
+              v-for="(s, i) in segments.get(d.day) ?? []"
+              :key="i"
+              class="seg"
+              :title="s.title"
+              :style="{
+                left: `${pct(s.from)}%`,
+                width: `${pct(s.to) - pct(s.from)}%`,
+                background: s.color,
+              }"
+            />
+            <span
+              v-if="d.isToday && nowHour >= hourRange[0] && nowHour <= hourRange[1]"
+              class="now"
+              :style="{ left: `${pct(nowHour)}%` }"
+            />
+          </span>
+          <span class="amount">{{ hoursMinutes(d.ms) }}</span>
+        </component>
       </li>
     </ol>
 
@@ -196,14 +203,35 @@ const legend = computed(() => {
   gap: 0.25rem;
   font-variant-numeric: tabular-nums;
 }
-.days > li,
+.row,
 .axis {
   display: grid;
   grid-template-columns: 3.25rem 1fr 3.5rem;
   align-items: center;
   gap: 1rem;
   padding: 0.65rem 0;
+}
+.days > li {
   border-bottom: 1px dotted var(--dot-light);
+}
+a.row {
+  color: inherit;
+  text-decoration: none;
+  margin: 0 -0.5rem;
+  padding-inline: 0.5rem;
+  border-radius: 8px;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.15s ease;
+}
+a.row:hover {
+  background: rgb(0 0 0 / 0.03);
+}
+a.row:active {
+  background: rgb(0 0 0 / 0.06);
+}
+a.row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
 }
 .day {
   display: flex;

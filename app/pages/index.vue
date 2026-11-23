@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type { TimeWindow } from "~/composables/useTimeWindows";
 
-useHead({ title: "Timely" });
-
 const HOLD_MS = 3000;
 
 const {
@@ -21,6 +19,24 @@ const {
   tagsByRecency,
 } = useTimeWindows();
 const now = useNow();
+
+// The log shows today, or a past day opened from the Week page (?day=YYYY-MM-DD).
+const route = useRoute();
+const router = useRouter();
+const day = computed(() => parseDayParam(route.query.day, now.value));
+const isToday = computed(() => day.value === startOfDay(now.value));
+const dayLabel = computed(() =>
+  new Date(day.value).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }),
+);
+function backToToday() {
+  const { day: _, ...query } = route.query;
+  void router.replace({ query });
+}
+useHead({ title: () => (isToday.value ? "Timely" : `${dayLabel.value} · Timely`) });
 
 // Swipe-to-remove: at most one row open; tapping anywhere outside it closes it.
 const openId = ref<string | null>(null);
@@ -67,7 +83,10 @@ const others = computed(() => windows.value.filter((w) => w.id !== editingId.val
 function startAdding() {
   openId.value = null;
   editingId.value = null;
-  draftNew.value = { id: crypto.randomUUID(), ...defaultRange(windows.value, Date.now()) };
+  draftNew.value = {
+    id: crypto.randomUUID(),
+    ...defaultRange(windows.value, Date.now(), undefined, day.value),
+  };
 }
 function closeEditor() {
   editingId.value = null;
@@ -132,11 +151,16 @@ function onKeydown(e: KeyboardEvent) {
 const elapsed = computed(() => (active.value ? Math.max(0, now.value - active.value.start) : 0));
 
 const startOfToday = computed(() => startOfDay(now.value));
-const today = computed(() =>
-  windows.value.filter((w) => w.start >= startOfToday.value).toReversed(),
+const todayCount = computed(
+  () => windows.value.filter((w) => w.start >= startOfToday.value).length,
 );
-const todayTotal = computed(() =>
-  today.value.reduce((sum, w) => sum + ((w.end ?? now.value) - w.start), 0),
+/** Windows starting on the shown day, latest first. */
+const dayWindows = computed(() => {
+  const end = addDays(day.value, 1);
+  return windows.value.filter((w) => w.start >= day.value && w.start < end).toReversed();
+});
+const dayTotal = computed(() =>
+  dayWindows.value.reduce((sum, w) => sum + ((w.end ?? now.value) - w.start), 0),
 );
 
 const hint = computed(() =>
@@ -175,7 +199,7 @@ const hint = computed(() =>
           >
             <template v-if="active">
               <span class="elapsed">{{ duration(elapsed) }}</span>
-              <span class="sub">Window {{ today.length }}</span>
+              <span class="sub">Window {{ todayCount }}</span>
             </template>
             <span v-else>Start</span>
           </button>
@@ -186,14 +210,21 @@ const hint = computed(() =>
 
     <section class="log">
       <div class="log-head">
-        <span>Today</span>
+        <span v-if="isToday">Today</span>
+        <template v-else>
+          <button type="button" class="back" aria-label="Back to today" @click="backToToday">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+            Today
+          </button>
+          <span>{{ dayLabel }}</span>
+        </template>
         <button type="button" class="add" aria-label="Add a time window" @click="startAdding">
           + Add
         </button>
-        <span class="total">{{ duration(todayTotal) }}</span>
+        <span class="total">{{ duration(dayTotal) }}</span>
       </div>
       <TransitionGroup tag="ol" name="row">
-        <li v-for="w in today" :key="w.id" :class="{ live: !w.end }">
+        <li v-for="w in dayWindows" :key="w.id" :class="{ live: !w.end }">
           <SwipeRow
             :open="openId === w.id"
             :label="`${clock(w.start)} to ${w.end ? clock(w.end) : 'now'}`"
@@ -224,6 +255,7 @@ const hint = computed(() =>
       :tags="tagsByRecency"
       :others="others"
       :is-new="draftNew !== null"
+      :min-start="day"
       @toggle-tag="onToggleTag"
       @create-tag="onCreateTag"
       @close="closeEditor"
@@ -351,6 +383,36 @@ const hint = computed(() =>
 }
 .log-head .total {
   margin-left: auto;
+}
+.back {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem 0.6rem 0.2rem 0.35rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.85rem;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s ease-out;
+}
+.back svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.back:active {
+  transform: scale(0.96);
+}
+.back:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 .add {
   all: unset;

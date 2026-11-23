@@ -21,6 +21,8 @@ const props = withDefaults(
     isNew?: boolean;
     /** Show the Delete button (default true). */
     deletable?: boolean;
+    /** Creating: earliest allowed start, when earlier than the default 24 h back (a past day). */
+    minStart?: number;
   }>(),
   { deletable: true },
 );
@@ -86,7 +88,7 @@ const next = computed(() => neighbours.value.next);
 const length = computed(() => endOrNow.value - draftStart.value);
 const startMin = computed(() =>
   props.isNew
-    ? props.now - DAY_MS
+    ? Math.min(props.now - DAY_MS, props.minStart ?? Infinity)
     : prev.value
       ? prev.value.start + MIN_WINDOW_MS
       : (props.window?.start ?? 0) - DAY_MS,
@@ -234,7 +236,9 @@ function onLimit(side: "min" | "max") {
       hint.value =
         !props.isNew && prev.value
           ? "Can't go past the start of the previous window"
-          : "Up to 24 h back";
+          : props.isNew && props.minStart !== undefined && props.minStart < props.now - DAY_MS
+            ? "Can't go before this day"
+            : "Up to 24 h back";
   } else {
     hint.value =
       side === "min"

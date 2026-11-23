@@ -7,11 +7,19 @@ const items = [
   { to: "/stats", label: "Stats", icon: "stats" },
 ] as const;
 
-// Week + Stats share the browsed week (?week=…), so carry it between them.
+// Week + Stats share the browsed week (?week=…), so carry it between them; from a past day
+// on Track (?day=…), they open on that day's week.
 const route = useRoute();
+const now = useNow();
 const linkTo = (path: string) => {
-  const week = route.query.week;
-  return path !== "/" && typeof week === "string" ? { path, query: { week } } : path;
+  if (path === "/") return path;
+  const { week, day } = route.query;
+  if (typeof week === "string") return { path, query: { week } };
+  if (typeof day === "string") {
+    const ws = startOfWeek(parseDayParam(day, now.value));
+    if (ws !== startOfWeek(now.value)) return { path, query: { week: weekParam(ws) } };
+  }
+  return path;
 };
 </script>
 

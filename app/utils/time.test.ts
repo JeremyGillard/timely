@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { defaultRange, isoWeek, parseWeekParam, weekLabel, weekParam } from "./time";
+import {
+  dayParam,
+  defaultRange,
+  isoWeek,
+  parseDayParam,
+  parseWeekParam,
+  weekLabel,
+  weekParam,
+} from "./time";
 
 const M = 60_000;
 // 2026-11-18 14:00 local, well clear of midnight
@@ -48,6 +56,51 @@ describe("defaultRange", () => {
   it("goes before the first window when one has been running since", () => {
     const ws = [{ start: at(9, 15), end: null }];
     expect(defaultRange(ws, NOW)).toEqual({ start: at(8, 45), end: at(9, 15) });
+  });
+
+  describe("on a past day", () => {
+    const D = 86_400_000;
+    const DAY = new Date(2026, 10, 16).getTime(); // Mon, two days before NOW
+    const on = (h: number, m = 0) => new Date(2026, 10, 16, h, m).getTime();
+
+    it("suggests 09:00 when the day is empty, ignoring other days", () => {
+      const ws = [{ start: at(9), end: at(10) }];
+      expect(defaultRange(ws, NOW, undefined, DAY)).toEqual({ start: on(9), end: on(9, 30) });
+    });
+
+    it("suggests right after the day's last window", () => {
+      const ws = [
+        { start: on(9), end: on(10) },
+        { start: on(10, 10), end: on(12) },
+      ];
+      expect(defaultRange(ws, NOW, undefined, DAY)).toEqual({ start: on(12), end: on(12, 30) });
+    });
+
+    it("stops at midnight", () => {
+      const ws = [{ start: on(9), end: on(23, 50) }];
+      expect(defaultRange(ws, NOW, undefined, DAY)).toEqual({ start: on(23, 50), end: DAY + D });
+    });
+
+    it("fills a gap that ends at a window still running into the next day", () => {
+      const ws = [
+        { start: on(9), end: on(10) },
+        { start: on(10, 10), end: at(1) + 86_400_000 * -1 }, // ends Tue 01:00
+      ];
+      expect(defaultRange(ws, NOW, undefined, DAY)).toEqual({ start: on(10), end: on(10, 10) });
+    });
+  });
+});
+
+describe("day param", () => {
+  it("formats and parses local dates", () => {
+    expect(dayParam(NOW)).toBe("2026-11-18");
+    expect(parseDayParam("2026-11-16", NOW)).toBe(new Date(2026, 10, 16).getTime());
+  });
+
+  it("falls back to today for missing, invalid or future values", () => {
+    const today = new Date(2026, 10, 18).getTime();
+    for (const p of [undefined, "x", "2026-11-31", "2026-11-19"])
+      expect(parseDayParam(p, NOW)).toBe(today);
   });
 });
 
