@@ -6,6 +6,11 @@ const baseURL = process.env.NUXT_APP_BASE_URL ?? "/";
 export default defineNuxtConfig({
   compatibilityDate: "2025-07-15",
   devtools: { enabled: true },
+  // Client-rendered SPA: all data lives on the device (localStorage, later the encrypted
+  // vault), so a server/build-time render could only show empty data at the build's clock
+  // and then mismatch on hydration. The static shell just paints the background until mount.
+  ssr: false,
+  spaLoadingTemplate: false,
   css: ["~/assets/css/main.css"],
   modules: ["@vite-pwa/nuxt"],
   // Service worker: precaches the generated site (works offline) and, when a deploy lands,
@@ -40,7 +45,8 @@ export default defineNuxtConfig({
   app: {
     baseURL,
     head: {
-      htmlAttrs: { lang: "en" },
+      // inline background: no white flash before the CSS loads
+      htmlAttrs: { lang: "en", style: "background:#f1f1ee" },
       // viewport-fit=cover: draw under the notch / home indicator (padded via safe-area insets in CSS)
       viewport: "width=device-width, initial-scale=1, viewport-fit=cover",
       meta: [
