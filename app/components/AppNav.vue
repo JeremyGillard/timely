@@ -174,7 +174,7 @@ const linkTo = (path: string) => {
   .nav {
     position: fixed;
     top: calc(1.75rem + env(safe-area-inset-top));
-    right: 2rem;
+    right: calc(2rem + 46px + 0.5rem); /* sync button sits on its right */
     z-index: 10;
     display: flex;
     gap: 0.25rem;

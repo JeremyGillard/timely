@@ -26,6 +26,8 @@ export interface VaultMeta {
   version: 1;
   salt: string; // base64url, PRF eval input
   credentials: VaultCredential[];
+  /** DEK wrapped by the recovery key (sync vaults). */
+  recovery?: Pick<VaultCredential, "wrappedKey" | "iv">;
 }
 
 export class VaultError extends Error {}
@@ -124,9 +126,11 @@ async function kekFromSecret(secret: ArrayBuffer): Promise<CryptoKey> {
 
 // ---------- vault lifecycle ----------
 
-/** Registers a new passkey, creates the vault and returns the unlocked data key. */
-export async function createVault(userName: string): Promise<CryptoKey> {
-  const salt = random(32);
+/** Creates a passkey (with PRF) and returns its id and PRF secret for `salt`. */
+async function registerPasskey(
+  userName: string,
+  salt: Bytes,
+): Promise<{ id: string; secret: ArrayBuffer }> {
   const created = (await navigator.credentials.create({
     publicKey: {
       rp: { name: "Timely" },
@@ -150,25 +154,30 @@ export async function createVault(userName: string): Promise<CryptoKey> {
   // Some platforms only return PRF output on assertion, not on creation.
   const secret =
     (prf?.results?.first as ArrayBuffer | undefined) ?? (await prfAssert(salt, [id])).secret;
-  const kek = await kekFromSecret(secret);
+  return { id, secret };
+}
 
-  // DEK is extractable only long enough to be wrapped, then re-imported non-extractable via unwrap.
-  const dek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, [
-    "encrypt",
-    "decrypt",
-  ]);
+async function wrapWith(kek: CryptoKey, dek: CryptoKey) {
   const iv = random(12);
   const wrapped = await crypto.subtle.wrapKey("raw", dek, kek, { name: "AES-GCM", iv });
+  return { wrappedKey: b64u(wrapped), iv: b64u(iv) };
+}
 
+const newDek = () =>
+  // Extractable only long enough to be wrapped; callers re-import it non-extractable via unwrap.
+  crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+
+/** Registers a new passkey, creates the vault and returns the unlocked data key. */
+export async function createVault(userName: string): Promise<CryptoKey> {
+  const salt = random(32);
+  const { id, secret } = await registerPasskey(userName, salt);
+  const wrapped = await wrapWith(await kekFromSecret(secret), await newDek());
   await writeMeta({
     version: 1,
     salt: b64u(salt),
-    credentials: [
-      { id, wrappedKey: b64u(wrapped), iv: b64u(iv), createdAt: new Date().toISOString() },
-    ],
+    credentials: [{ id, ...wrapped, createdAt: new Date().toISOString() }],
   });
-
-  const key = await unwrap(kek, { wrappedKey: b64u(wrapped), iv: b64u(iv) });
+  const key = await unwrap(await kekFromSecret(secret), wrapped);
   await writeData(key, []);
   return key;
 }
@@ -224,4 +233,121 @@ export async function writeData(key: CryptoKey, value: unknown) {
   out.set(iv, 0);
   out.set(new Uint8Array(cipher), 12);
   await writeFile(DATA, out);
+}
+
+// ---------- sync vault (meta kept on the server, data key on the device) ----------
+
+const RECOVERY_INFO = new TextEncoder().encode("timely-recovery-kek-v1");
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/** 32 random bytes as grouped base32 (`XXXX-XXXX-…`), shown to the user once. */
+export function newRecoveryKey(): string {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const b of random(32)) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out.match(/.{1,4}/g)!.join("-");
+}
+
+function parseRecoveryKey(key: string): Bytes {
+  const chars = key.toUpperCase().replace(/[^A-Z2-7]/g, "");
+  if (chars.length !== 52) throw new VaultError("That recovery key doesn't look right");
+  const out: number[] = [];
+  let bits = 0;
+  let value = 0;
+  for (const c of chars) {
+    value = (value << 5) | B32.indexOf(c);
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return Uint8Array.from(out.slice(0, 32));
+}
+
+// The recovery key is 256 random bits, so plain HKDF is enough (no password stretching needed).
+async function kekFromRecovery(key: string): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey("raw", parseRecoveryKey(key), "HKDF", false, [
+    "deriveKey",
+  ]);
+  return crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: RECOVERY_INFO },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["wrapKey", "unwrapKey"],
+  );
+}
+
+/**
+ * New sync vault: a fresh data key wrapped by a recovery key and, given a user name, a new
+ * passkey (null: recovery key only, for authenticators without PRF).
+ * Nothing is written locally; the caller uploads `meta` and keeps `key`.
+ */
+export async function createSyncVault(
+  passkeyUser: string | null,
+): Promise<{ meta: VaultMeta; key: CryptoKey; recoveryKey: string }> {
+  const salt = random(32);
+  const dek = await newDek();
+  const recoveryKey = newRecoveryKey();
+  const recoveryKek = await kekFromRecovery(recoveryKey);
+  const credentials: VaultCredential[] = [];
+  if (passkeyUser) {
+    const { id, secret } = await registerPasskey(passkeyUser, salt);
+    const wrapped = await wrapWith(await kekFromSecret(secret), dek);
+    credentials.push({ id, ...wrapped, createdAt: new Date().toISOString() });
+  }
+  const meta: VaultMeta = {
+    version: 1,
+    salt: b64u(salt),
+    credentials,
+    recovery: await wrapWith(recoveryKek, dek),
+  };
+  return { meta, key: await unwrap(recoveryKek, meta.recovery!), recoveryKey };
+}
+
+/** Unlocks with the recovery key (non-extractable data key). */
+export async function unlockWithRecovery(meta: VaultMeta, recoveryKey: string) {
+  if (!meta.recovery) throw new VaultError("This vault has no recovery key");
+  try {
+    return await unwrap(await kekFromRecovery(recoveryKey), meta.recovery);
+  } catch (e) {
+    if (e instanceof VaultError) throw e;
+    throw new VaultError("Wrong recovery key");
+  }
+}
+
+// ---------- per-record encryption (sync payloads) ----------
+
+/** base64(iv || AES-GCM(JSON)), bound to the record's kind + id so rows can't be swapped. */
+export async function sealRecord(key: CryptoKey, aad: string, value: unknown): Promise<string> {
+  const iv = random(12);
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(aad) },
+    key,
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  const out = new Uint8Array(12 + cipher.byteLength);
+  out.set(iv, 0);
+  out.set(new Uint8Array(cipher), 12);
+  return b64u(out);
+}
+
+export async function openRecord<T>(key: CryptoKey, aad: string, payload: string): Promise<T> {
+  const bytes = fromB64u(payload);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: new TextEncoder().encode(aad) },
+    key,
+    bytes.slice(12),
+  );
+  return JSON.parse(new TextDecoder().decode(plain)) as T;
 }

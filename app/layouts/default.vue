@@ -2,6 +2,7 @@
   <div class="layout">
     <slot />
     <AppNav />
+    <SyncControl />
   </div>
 </template>
 

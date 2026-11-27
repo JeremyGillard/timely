@@ -1,3 +1,5 @@
+import { applyById, closeExtraRunning, type Item, type Kind } from "../utils/sync";
+
 export interface TimeWindow {
   id: string;
   start: number; // epoch ms
@@ -51,7 +53,9 @@ export function useTimeWindows() {
   });
   const active = computed(() => windows.value.find((w) => w.end === null) ?? null);
 
-  const persist = () => {
+  const ledger = useLedger();
+
+  const save = () => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(windows.value));
       localStorage.setItem(TAGS_KEY, JSON.stringify(tags.value));
@@ -59,6 +63,34 @@ export function useTimeWindows() {
       // storage unavailable (private mode, quota) — keep in memory only
     }
   };
+
+  /** Hands every window + tag to the sync ledger, which stamps what changed. */
+  const recordChanges = () =>
+    ledger.record(
+      [
+        ...windows.value.map((w) => ({ id: w.id, kind: "window" as const, value: w })),
+        ...tags.value.map((t) => ({ id: t.id, kind: "tag" as const, value: t })),
+      ],
+      ["window", "tag"],
+    );
+
+  const persist = () => {
+    save();
+    recordChanges();
+  };
+
+  /** Applies records pulled from sync (they won last-writer-wins). */
+  function applyRemote(upserts: Item[], deletes: { id: string; kind: Kind }[]) {
+    const pick = <T>(kind: Kind) => upserts.filter((u) => u.kind === kind).map((u) => u.value as T);
+    const gone = (kind: Kind) => new Set(deletes.filter((d) => d.kind === kind).map((d) => d.id));
+    windows.value = closeExtraRunning(
+      applyById(windows.value, pick<TimeWindow>("window"), gone("window")).toSorted(
+        (a, b) => a.start - b.start,
+      ),
+    );
+    tags.value = applyById(tags.value, pick<Tag>("tag"), gone("tag"));
+    persist(); // only what changed after applying (e.g. a closed extra running window) is dirty
+  }
 
   function load() {
     try {
@@ -73,6 +105,7 @@ export function useTimeWindows() {
     } catch {
       tags.value = [];
     }
+    recordChanges(); // stamps data from before sync existed (first run only)
   }
 
   const closeActive = (now: number) => {
@@ -253,6 +286,7 @@ export function useTimeWindows() {
     renameTag,
     deleteTag,
     toggleTag,
+    applyRemote,
   };
 }
 

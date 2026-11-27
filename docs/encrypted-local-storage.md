@@ -2,13 +2,13 @@
 
 ## Goal
 
-Timely keeps every timesheet record **on the user's device only**: no account, no server, no sync service. That data is personal (when someone works, how much, and what they note down), so it must be **encrypted at rest** in browser storage and only **decrypted after the user proves it's them**, typically with a passkey (WebAuthn: Face ID, Touch ID, Windows Hello, device PIN).
+Timely keeps every timesheet record **on the user's device** by default: no account needed. Sync across devices is **opt-in** (see "Optional sync") and end-to-end encrypted, so the server never sees plaintext. That data is personal (when someone works, how much, and what they note down), so it must be **encrypted at rest** in browser storage and only **decrypted after the user proves it's them**, typically with a passkey (WebAuthn: Face ID, Touch ID, Windows Hello, device PIN).
 
 Security must not cost usability: tracking time has to stay a **one-tap** action, and unlocking a **single biometric prompt**.
 
 ## Principles
 
-1. **Local-first.** Data lives in the browser (OPFS / IndexedDB). Nothing leaves the device unless the user explicitly exports it.
+1. **Local-first.** Data lives in the browser (OPFS / IndexedDB). Nothing leaves the device unless the user explicitly exports it or turns on sync (ciphertext only).
 2. **Never stored in plaintext.** Everything persisted is ciphertext. Plaintext only exists in memory while the app is unlocked.
 3. **Unlock with what the device already has.** A passkey with biometrics is the main path, with no password to remember. Biometric data is never seen by the app (it stays in the OS authenticator), which also keeps us out of GDPR biometric-data scope.
 4. **Tracking never prompts.** Starting, splitting or stopping a time window must work without unlocking (see "Write without unlocking").
@@ -59,6 +59,16 @@ To keep tracking one-tap, new records are encrypted with a **public key** instea
 - **Session unlock** with auto-lock after inactivity (e.g. 5 min) and when the app goes to the background for a while.
 - **Fallback:** if the authenticator doesn't support PRF, offer a passphrase. Always offer a recovery key at setup.
 - Clear copy: "Your data is encrypted on this device. Only you can unlock it."
+
+## Optional sync
+
+Opt-in from the cloud button (`app/components/SyncControl.vue`, logic in `app/composables/useSync.ts`). Supabase project `timely` (`rrpritruivgzcftcqgnc`, eu-west-3), schema in `supabase/migrations/`.
+
+- **Sign-in:** Supabase email OTP (6-digit code). No magic link: on iOS it would open Safari, whose storage is separate from the home-screen app. Auth only scopes rows (RLS `user_id = auth.uid()`); it is not the encryption key.
+- **Key:** a random DEK wrapped by a passkey (PRF) and by a recovery key, stored in `vault_meta` (non-secret). A new device unwraps it with the synced passkey, or with the recovery key (other ecosystem / no PRF). The unwrapped, non-extractable DEK is kept in IndexedDB (`app/utils/keyStore.ts`) so sync needs no prompt per session. Same exposure as today's plaintext `localStorage`; revisit when local data gets encrypted at rest.
+- **Records:** one row per window / tag / settings: `payload = base64(iv || AES-GCM(JSON))`, with `kind:id` as AAD so the server can't swap rows. Tombstones have no payload.
+- **Merge:** last-writer-wins per record on the client timestamp, on both client (`app/utils/sync.ts`) and server (trigger). The ledger (`useLedger`) diffs store snapshots to stamp changes and tombstones, so stores don't stamp each mutation. Pulls use a `server_updated_at` cursor (with a 5 s overlap).
+- **Server sees:** account email, record ids, kinds, counts and change timestamps. Not: times, notes, tags, settings.
 
 ## Constraints
 

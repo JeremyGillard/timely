@@ -12,6 +12,14 @@ export default defineNuxtConfig({
   ssr: false,
   spaLoadingTemplate: false,
   css: ["~/assets/css/main.css"],
+  // Optional sync. Publishable key: safe in the client, rows are protected by RLS and
+  // end-to-end encrypted. Override with NUXT_PUBLIC_SUPABASE_URL / NUXT_PUBLIC_SUPABASE_KEY.
+  runtimeConfig: {
+    public: {
+      supabaseUrl: "https://rrpritruivgzcftcqgnc.supabase.co",
+      supabaseKey: "sb_publishable_3TT2cELXH_hLzih86ogHGg_YpIs-HQS",
+    },
+  },
   modules: ["@vite-pwa/nuxt"],
   // Service worker: precaches the generated site (works offline) and, when a deploy lands,
   // installs the new version in the background → "Update available" toast (app/app.vue).
